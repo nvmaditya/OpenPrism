@@ -136,8 +136,9 @@ Think → Plan → Implement (small) → Verify → Review → Next
 | 5 | PDF Compiled panel pipeline | `tdd` | Previews outside project tree |
 | 6 | Skills full surface | `tdd` | All 5 skills load/install |
 | 7 | FastAPI SSE chat + project APIs | `tdd` | SSE tokens + tool events + file_changed |
-| 8 | Next.js dashboard + IDE shell | structure first | J1–J4 manual happy path |
-| 9 | Outline, Versions/Comments stubs, polish | verify, optional playwright | Ship checklist |
+| 8 | End-user Prism UX + abstraction (dashboard + IDE) | structure + hide debug chrome | J1–J3, J5 usable without raw API/SSE literacy |
+| 9 | Outline, import polish, stubs | product chrome | Outline jump + import |
+| 10 | Harden and ship | verify | Fresh clone + guardrails |
 
 **UI rule (skills-guide):** structure and states first; taste skills only after IDE chrome works.
 
@@ -405,32 +406,41 @@ Visual: dark theme default to match Prism; polish later with taste skill if desi
 
 ---
 
-### Phase 8 — Next.js dashboard + IDE (structure)
+### Phase 8 — End-user Prism UX + presentation abstraction
 
-**Do:** implement Surfaces A+B per §0; wire APIs; Outline; Ask anything; Compiled + Logs.  
+**Product goal (supersedes interim “verify console” structure UI):**  
+Ship a **Prism-like end-user** dashboard + project editor. Hide developer/debug chrome by default (no API health URL, hex project ids as primary labels, SSE/role dumps, raw `success=` compile telemetry, or skills-catalog dump on the main dashboard).
 
-**Exit criteria (manual):**
-- [ ] J1 New blank / example / import zip  
-- [ ] J2 edit + compile → PDF + Logs  
-- [ ] J3 agent edits `.tex` on disk  
-- [ ] J4 outline jump  
-- [ ] J5 upload image  
+**Do:**
+- **Your Projects** list with **Blank** / **Example** create; open into a project by name  
+- Project workspace: **Files**, editable source, floating **Ask anything**, right rail **Compiled** (document preview first) + **Logs** (human success/failure; technical log behind progressive disclosure)  
+- Keep real APIs underneath (projects, files, compile/PDF, SSE chat) — map DTOs to user-facing labels only  
 
-**No** taste pass required to exit phase.
+**Exit:** banned debug strings absent from primary chrome; create/edit/save/compile/chat still hit backend; journeys J1–J3 + J5 usable without developer literacy.
 
 ---
 
-### Phase 9 — Stubs, harden, ship
+### Phase 9 — Outline, import polish, stubs
 
 **Do:**
-- Versions / Comments / Project Info minimal stubs (read-only placeholders OK)  
-- Invite/Shared disabled with tooltip “single-user local”  
+- Document outline jump (LaTeX sections → editor line)  
+- Import zip/folder UX if not already first-class in UI  
+- Versions / Comments / Project Info minimal stubs  
+- Invite/Shared disabled with single-user local affordance  
+
+**Exit:** outline + import happy path; stubs present without multi-tenant auth.
+
+---
+
+### Phase 10 — Harden and ship
+
+**Do:**
 - Guardrail tests (pip, path lint, preview root)  
-- README quickstart (TeX install, env, run backend+frontend)  
-- Optional Playwright for J2+J3  
+- README quickstart (TeX, `GROQ_API_KEY`, `./start.sh`)  
+- Optional Playwright for compile + chat journeys  
 - `verification-before-completion` / `check-work`  
 
-**Exit:** fresh clone path works; `AGENTS.md` matches runtime tools/skills.
+**Exit:** fresh clone path works; product UI remains abstraction-first.
 
 ---
 
