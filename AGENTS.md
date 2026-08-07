@@ -105,15 +105,31 @@ Allowlisted binaries only (server rejects others):
 - **Never** write generated PDF preview images into the project paper tree by default.
 - Use `view_image` / preview URLs from the preview root, not from the project workspace.
 
-## Available Agent Skills
+## Skills system (Phase 6)
 
-(Registered in later phases.)
+Progressive `SKILL.md` packages. Catalog ships with the app; installs land under `PRISM_SKILL_HOME`.
 
-- `imagegen` — raster image generation/editing
-- `openai-docs` — OpenAI product/API docs help
-- `plugin-creator` — scaffold plugin manifests
-- `skill-creator` — create/revise skills
-- `skill-installer` — install skills from catalog or GitHub
+### Catalog (five)
+
+| Skill | Role |
+|-------|------|
+| `imagegen` | Raster image generation/editing guidance |
+| `openai-docs` | Official OpenAI product/API guidance |
+| `plugin-creator` | Scaffold `.codex-plugin/plugin.json` |
+| `skill-creator` | Author/revise skill packages |
+| `skill-installer` | Install catalog skills into skill-home |
+
+### APIs
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/skills` | List catalog + skill-home (home overrides name clashes) |
+| `GET` | `/api/skills/{name}` | Load full body + frontmatter |
+| `POST` | `/api/skills/install` | `{ "name" }` copy catalog → skill-home |
+| `POST` | `/api/skills/create` | skill-creator: write new `SKILL.md` under skill-home |
+| `POST` | `/api/skills/plugin-scaffold` | plugin-creator: `.codex-plugin/plugin.json` under project or skill-home/plugins |
+
+Live imagegen/GitHub install require credentials and are optional; list/load/local install/create/scaffold are the core platform.
 
 ## Changelog
 
@@ -124,4 +140,5 @@ Allowlisted binaries only (server rejects others):
 - Phase 3: Provider-pluggable `get_chat_model` (openai/azure/ollama/anthropic/custom) + LangGraph agent with project-scoped FS tools; mock-driven tests.
 - Phase 4: Allowlisted TeX subprocess runner; project compile + retrievable logs (`latexmk`/`pdflatex`/…).
 - Phase 5: PDF serve (`/pdf`) + page previews under isolated `PRISM_PREVIEW_ROOT` (pdftoppm or Pillow fallback).
+- Phase 6: Progressive skills — five catalog packages, list/load/install/create, plugin scaffold; skill-home via `PRISM_SKILL_HOME`.
 

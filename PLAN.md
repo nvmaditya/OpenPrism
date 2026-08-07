@@ -557,3 +557,8 @@ ext package; Phase 0 page is a dark dashboard shell (not full IDE).
 
 - [x] PDF serve + preview root isolation; pushed to OpenPrism.
 
+
+## Phase 6 status
+
+- [x] Skills catalog + install/create/plugin scaffold; pushed to OpenPrism.
+
