@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.chat import router as chat_router
 from app.api.compile import router as compile_router
 from app.api.pdf import router as pdf_router
 from app.api.projects import router as projects_router
@@ -54,9 +55,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict:
         return health_payload()
 
-    # compile/pdf routers first so static paths like /tools win over {project_id}
+    # compile/pdf/chat routers first so static paths like /tools win over {project_id}
     app.include_router(compile_router)
     app.include_router(pdf_router)
+    app.include_router(chat_router)
     app.include_router(projects_router)
     app.include_router(skills_router)
 
@@ -65,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.compile_engine = compile_engine  # type: ignore[attr-defined]
     app.state.preview_service = preview_service  # type: ignore[attr-defined]
     app.state.skill_registry = skill_registry  # type: ignore[attr-defined]
+    app.state.chat_model_override = None  # type: ignore[attr-defined]
     return app
 
 

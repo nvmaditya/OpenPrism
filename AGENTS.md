@@ -71,7 +71,7 @@ Also: `PRISM_LLM_MODEL`, `PRISM_LLM_API_KEY`, `PRISM_LLM_BASE_URL`.
   - `write_project_file(path, content)`
   - `list_project_files()`
 - Inject a chat model for tests (e.g. scripted tool-calling model); production uses `get_chat_model(settings)`.
-- SSE/HTTP chat streaming is a later phase; this phase is the invoke entry + tools.
+- **Streaming chat (Phase 7):** `POST /api/projects/{id}/chat` with `{"message":"..."}` returns SSE (`text/event-stream`). Events: `token`, `tool_start`, `tool_end`, `file_changed`, `error`, `done`. FS writes surface as `file_changed` and land under that project only.
 
 ## LaTeX tools + compile (Phase 4)
 
