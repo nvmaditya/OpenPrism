@@ -1,4 +1,4 @@
-"""Provider-pluggable chat model factory (PRISM_LLM_* settings)."""
+"""Provider-pluggable chat model factory (PRISM_LLM_* + GROQ_API_KEY)."""
 
 from __future__ import annotations
 
@@ -10,8 +10,11 @@ from app.settings import Settings, get_settings
 
 # Documented provider ids (switch via PRISM_LLM_PROVIDER only — no source edits).
 SUPPORTED_PROVIDERS = frozenset(
-    {"openai", "azure", "ollama", "anthropic", "custom"}
+    {"openai", "azure", "ollama", "anthropic", "custom", "groq"}
 )
+
+GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
+GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 
 class ProviderError(ValueError):
@@ -24,9 +27,11 @@ def get_chat_model(settings: Settings | None = None) -> BaseChatModel:
 
     Switching ``PRISM_LLM_PROVIDER`` (and related env vars) changes which
     backend is constructed without editing application source.
+
+    ``GROQ_API_KEY`` is used when provider is ``groq`` (default).
     """
     settings = settings or get_settings()
-    provider = (settings.prism_llm_provider or "openai").strip().lower()
+    provider = (settings.prism_llm_provider or "groq").strip().lower()
     if provider not in SUPPORTED_PROVIDERS:
         raise ProviderError(
             f"unsupported PRISM_LLM_PROVIDER={provider!r}; "
@@ -37,7 +42,28 @@ def get_chat_model(settings: Settings | None = None) -> BaseChatModel:
     api_key = settings.prism_llm_api_key or "not-set"
     base_url = (settings.prism_llm_base_url or "").strip() or None
 
+    if provider == "groq":
+        key = (settings.groq_api_key or settings.prism_llm_api_key or "").strip()
+        if not key:
+            raise ProviderError(
+                "GROQ_API_KEY (or PRISM_LLM_API_KEY) is required for provider=groq"
+            )
+        return _openai_compatible(
+            model=model if model and model != "gpt-4o" else GROQ_DEFAULT_MODEL,
+            api_key=key,
+            base_url=base_url or GROQ_DEFAULT_BASE,
+            provider_label="groq",
+        )
+
     if provider in ("openai", "custom"):
+        # Fall back to GROQ_API_KEY if OpenAI key empty (common local .env)
+        if (not api_key or api_key == "not-set") and settings.groq_api_key:
+            return _openai_compatible(
+                model=model if model != "gpt-4o" else GROQ_DEFAULT_MODEL,
+                api_key=settings.groq_api_key,
+                base_url=base_url or GROQ_DEFAULT_BASE,
+                provider_label="groq",
+            )
         return _openai_compatible(
             model=model,
             api_key=api_key,
@@ -46,7 +72,6 @@ def get_chat_model(settings: Settings | None = None) -> BaseChatModel:
         )
 
     if provider == "ollama":
-        # OpenAI-compatible Ollama endpoint (default local)
         ollama_base = base_url or "http://127.0.0.1:11434/v1"
         return _openai_compatible(
             model=model or "llama3",
@@ -85,7 +110,6 @@ def _openai_compatible(
     if base_url:
         kwargs["base_url"] = base_url
     chat = ChatOpenAI(**kwargs)
-    # Stash label for describe_chat_model / tests (not a live network field)
     object.__setattr__(chat, "_prism_provider", provider_label)
     return chat
 
@@ -93,7 +117,6 @@ def _openai_compatible(
 def _azure(*, model: str, api_key: str, base_url: str | None) -> BaseChatModel:
     from langchain_openai import AzureChatOpenAI
 
-    # base_url is the Azure endpoint, e.g. https://{resource}.openai.azure.com/
     kwargs: dict[str, Any] = {
         "azure_deployment": model,
         "api_key": api_key,
@@ -103,7 +126,6 @@ def _azure(*, model: str, api_key: str, base_url: str | None) -> BaseChatModel:
     if base_url:
         kwargs["azure_endpoint"] = base_url
     else:
-        # Placeholder endpoint so the object can be constructed without live calls
         kwargs["azure_endpoint"] = "https://example.openai.azure.com/"
     chat = AzureChatOpenAI(**kwargs)
     object.__setattr__(chat, "_prism_provider", "azure")
@@ -134,7 +156,6 @@ def describe_chat_model(model: BaseChatModel) -> dict[str, Any]:
         "module": type(model).__module__,
     }
 
-    # OpenAI-compatible
     for attr in ("model_name", "model"):
         if hasattr(model, attr):
             val = getattr(model, attr)
@@ -142,7 +163,6 @@ def describe_chat_model(model: BaseChatModel) -> dict[str, Any]:
                 info["model"] = val
                 break
 
-    # base URL / endpoint (langchain-openai field names vary by version)
     for attr in (
         "openai_api_base",
         "base_url",
@@ -155,7 +175,6 @@ def describe_chat_model(model: BaseChatModel) -> dict[str, Any]:
                 info["base_url"] = str(val)
                 break
 
-    # Try nested client if present
     if "base_url" not in info:
         client = getattr(model, "root_client", None) or getattr(model, "client", None)
         if client is not None:

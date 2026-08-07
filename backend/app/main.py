@@ -12,7 +12,7 @@ from app.compile.engine import CompileEngine
 from app.domain.project import ProjectStore
 from app.health import health_payload
 from app.previews.pdf_render import PreviewService
-from app.settings import Settings, get_settings
+from app.settings import Settings, get_settings, _MONOREPO_ROOT
 from app.skills.registry import SkillRegistry
 
 
@@ -20,21 +20,23 @@ def _default_catalog_dir() -> Path:
     return Path(__file__).resolve().parent / "skills" / "catalog"
 
 
+def _resolve_data_path(p: Path) -> Path:
+    path = Path(p)
+    if path.is_absolute():
+        return path
+    # Prefer monorepo-root-relative data dirs (stable regardless of cwd)
+    return (_MONOREPO_ROOT / path).resolve()
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    projects_root = Path(settings.prism_projects_root)
-    if not projects_root.is_absolute():
-        projects_root = projects_root.resolve()
+    projects_root = _resolve_data_path(settings.prism_projects_root)
     projects_root.mkdir(parents=True, exist_ok=True)
 
-    preview_root = Path(settings.prism_preview_root)
-    if not preview_root.is_absolute():
-        preview_root = preview_root.resolve()
+    preview_root = _resolve_data_path(settings.prism_preview_root)
     preview_root.mkdir(parents=True, exist_ok=True)
 
-    skill_home = Path(settings.prism_skill_home)
-    if not skill_home.is_absolute():
-        skill_home = skill_home.resolve()
+    skill_home = _resolve_data_path(settings.prism_skill_home)
     skill_home.mkdir(parents=True, exist_ok=True)
 
     store = ProjectStore(projects_root)

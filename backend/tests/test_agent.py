@@ -115,6 +115,23 @@ def test_supported_providers_documented():
     assert "azure" in SUPPORTED_PROVIDERS
     assert "anthropic" in SUPPORTED_PROVIDERS
     assert "custom" in SUPPORTED_PROVIDERS
+    assert "groq" in SUPPORTED_PROVIDERS
+
+
+def test_factory_groq_uses_key_and_base():
+    m = get_chat_model(
+        Settings(
+            prism_llm_provider="groq",
+            prism_llm_model="llama-3.3-70b-versatile",
+            groq_api_key="gsk_test_key",
+            prism_llm_api_key="",
+            prism_llm_base_url="",
+        )
+    )
+    d = describe_chat_model(m)
+    assert d["provider"] == "groq"
+    assert "groq.com" in (d.get("base_url") or "")
+    assert d.get("model") == "llama-3.3-70b-versatile"
 
 
 def test_agent_write_then_read_with_scripted_model(store: ProjectStore, projects_root: Path):

@@ -56,12 +56,13 @@ Switch backend via env only (no source edits):
 
 | `PRISM_LLM_PROVIDER` | Construction |
 |----------------------|--------------|
-| `openai` / `custom` | `ChatOpenAI` (+ optional `PRISM_LLM_BASE_URL`) |
+| `groq` (default) | `ChatOpenAI` → `https://api.groq.com/openai/v1` using **`GROQ_API_KEY`** |
+| `openai` / `custom` | `ChatOpenAI` (+ optional `PRISM_LLM_BASE_URL`); falls back to `GROQ_API_KEY` if OpenAI key empty |
 | `ollama` | `ChatOpenAI` OpenAI-compatible; default base `http://127.0.0.1:11434/v1` |
 | `azure` | `AzureChatOpenAI`; `PRISM_LLM_MODEL` = deployment; `PRISM_LLM_BASE_URL` = endpoint |
 | `anthropic` | `ChatAnthropic` |
 
-Also: `PRISM_LLM_MODEL`, `PRISM_LLM_API_KEY`, `PRISM_LLM_BASE_URL`.
+Also: `PRISM_LLM_MODEL` (Groq default `llama-3.3-70b-versatile`), `PRISM_LLM_API_KEY`, `PRISM_LLM_BASE_URL`, **`GROQ_API_KEY`** (from monorepo `.env`).
 
 ### Agent graph (`app.agent.graph.run_agent` / `build_agent`)
 
