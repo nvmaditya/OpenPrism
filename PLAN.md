@@ -542,3 +542,8 @@ ext package; Phase 0 page is a dark dashboard shell (not full IDE).
 
 - [x] Sandbox FS: structured tree, upload, path escape tests; pushed to OpenPrism.
 
+
+## Phase 3 status
+
+- [x] Provider factory + LangGraph FS agent skeleton; mock tests; pushed to OpenPrism.
+

@@ -47,6 +47,31 @@ You are working inside the Prism app that helps researchers write and edit files
 - Reject `..` segments and absolute paths (`/…`, `C:\…`); never write outside the project storage root.
 - Prefer `prism-uploads/` for user assets (images, etc.).
 
+## LLM providers + agent (Phase 3)
+
+### Provider factory (`app.agent.providers.get_chat_model`)
+
+Switch backend via env only (no source edits):
+
+| `PRISM_LLM_PROVIDER` | Construction |
+|----------------------|--------------|
+| `openai` / `custom` | `ChatOpenAI` (+ optional `PRISM_LLM_BASE_URL`) |
+| `ollama` | `ChatOpenAI` OpenAI-compatible; default base `http://127.0.0.1:11434/v1` |
+| `azure` | `AzureChatOpenAI`; `PRISM_LLM_MODEL` = deployment; `PRISM_LLM_BASE_URL` = endpoint |
+| `anthropic` | `ChatAnthropic` |
+
+Also: `PRISM_LLM_MODEL`, `PRISM_LLM_API_KEY`, `PRISM_LLM_BASE_URL`.
+
+### Agent graph (`app.agent.graph.run_agent` / `build_agent`)
+
+- LangGraph ReAct agent bound to a **project id**.
+- FS tools (real `ProjectStore` + path sandbox):
+  - `read_project_file(path)`
+  - `write_project_file(path, content)`
+  - `list_project_files()`
+- Inject a chat model for tests (e.g. scripted tool-calling model); production uses `get_chat_model(settings)`.
+- SSE/HTTP chat streaming is a later phase; this phase is the invoke entry + tools.
+
 ## Available LaTeX Tools
 
 (Registered in later phases.)
@@ -75,4 +100,5 @@ You are working inside the Prism app that helps researchers write and edit files
 - Shipping: require push of every 100% tested feature to github.com/nvmaditya/OpenPrism.
 - Phase 1: Multi-project domain — create/list/delete blank+example, zip import with zip-slip rejection, cross-project isolation, file read/write under project root.
 - Phase 2: Structured workspace tree + multipart upload; hardened path sandbox on tree/read/write/upload (`../` and absolute rejected).
+- Phase 3: Provider-pluggable `get_chat_model` (openai/azure/ollama/anthropic/custom) + LangGraph agent with project-scoped FS tools; mock-driven tests.
 
