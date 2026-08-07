@@ -10,7 +10,21 @@ Local monorepo reverse-engineering [OpenAI Prism](https://prism.openai.com): LaT
 - `PLAN.md` — phased reverse-engineer plan
 - `.env.example` — LLM + path env vars
 
-## Backend
+## Quick start (backend + frontend)
+
+```bash
+# Git Bash / WSL / macOS / Linux
+./start.sh
+```
+
+- API: http://127.0.0.1:8000/health  
+- UI: http://127.0.0.1:3000/  
+- Logs: `logs/backend.log`, `logs/frontend.log`  
+- Ctrl+C stops both processes  
+
+Env overrides: `PRISM_PORT`, `PRISM_FRONTEND_PORT`, `NEXT_PUBLIC_API_URL`.
+
+## Backend (manual)
 
 ```powershell
 cd C:\Code\prism
@@ -26,7 +40,7 @@ Tests:
 C:\Code\prism\.venv\Scripts\python.exe -m pytest C:\Code\prism\backend -q
 ```
 
-## Frontend
+## Frontend (manual)
 
 ```powershell
 cd C:\Code\prism\frontend
@@ -38,4 +52,4 @@ Open http://localhost:3000
 
 ## Phase
 
-Phase 0 scaffold only — agent graph, TeX compile, skills, and full IDE come in later phases (see `PLAN.md`).
+See `PLAN.md` for reverse-engineer phases (projects, agent, TeX, PDF, skills, …).

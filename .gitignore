@@ -17,3 +17,6 @@ data/skill-home/*
 !data/skill-home/.gitkeep
 *.log
 .DS_Store
+
+logs/
+

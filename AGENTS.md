@@ -14,6 +14,7 @@ You are working inside the Prism app that helps researchers write and edit files
 - Definition of “100% tested” for a feature slice: automated tests (or documented smoke checks for UI) pass for that slice’s acceptance criteria, and the change is committed with a clear message.
 - After tests pass: `git push -u origin main` (or push the feature branch + open PR, then merge to `main` if not on main). Confirm the remote has the commit before claiming the feature is done.
 - Do **not** push half-baked or failing work; fix tests first, then push.
+- **Do not update docs during the push.** Feature commits should not mix in drive-by `AGENTS.md` / `PLAN.md` / README rewrites “for the push.” Only change docs when the user asked for documentation, or when the feature *requires* a shipping-rule update. Prefer code + tests in the feature commit; leave doc polish for an explicit docs task.
 
 ## Hard rules
 
