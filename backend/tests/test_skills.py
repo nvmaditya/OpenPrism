@@ -56,9 +56,22 @@ def test_load_skill_body(client: TestClient):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["name"] == "imagegen"
+    assert body["description"], "frontmatter description must parse (no BOM/meta empty)"
+    assert "raster" in body["description"].lower() or "image" in body["description"].lower()
     assert body["body"]
+    assert not body["body"].lstrip().startswith("---"), "body must exclude frontmatter"
+    assert body["body"].lstrip().startswith("#"), "body should start with markdown heading"
     assert "imagegen" in body["body"].lower() or "raster" in body["body"].lower()
-    assert "raw" in body and "---" in body["raw"]
+    assert "raw" in body and body["raw"].lstrip("\ufeff").startswith("---")
+
+
+def test_list_skills_have_nonempty_descriptions(client: TestClient):
+    r = client.get("/api/skills")
+    assert r.status_code == 200
+    by_name = {s["name"]: s for s in r.json()["skills"]}
+    for name in REQUIRED:
+        assert name in by_name
+        assert by_name[name]["description"], f"{name} missing description (BOM/parse bug?)"
 
 
 def test_load_unknown_404(client: TestClient):
@@ -125,6 +138,19 @@ def test_plugin_scaffold_in_project(client: TestClient, tmp_path: Path):
     assert "demo-plugin" in text
     # under project root
     assert pid in str(manifest)
+
+
+def test_plugin_scaffold_missing_project_404(client: TestClient):
+    r = client.post(
+        "/api/skills/plugin-scaffold",
+        json={
+            "name": "orphan-plugin",
+            "project_id": "0" * 32,
+            "description": "missing project",
+        },
+    )
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"]["code"] == "not_found"
 
 
 def test_plugin_scaffold_default_under_skill_home(

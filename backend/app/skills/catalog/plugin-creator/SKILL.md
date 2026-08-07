@@ -1,4 +1,4 @@
-﻿---
+---
 name: plugin-creator
 description: Scaffold Codex-style plugins with .codex-plugin/plugin.json and optional folders. Use when creating or updating a local plugin package.
 ---

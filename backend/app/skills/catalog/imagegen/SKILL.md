@@ -1,4 +1,4 @@
-﻿---
+---
 name: imagegen
 description: Create and edit raster-image assets (illustrations, mockups, textures, sprites, transparent cutouts). Use when the result should be a bitmap image.
 ---

@@ -1,4 +1,4 @@
-﻿---
+---
 name: openai-docs
 description: Official OpenAI product and API guidance. Use for API implementation, model selection, prompt upgrades, and Codex surface choice.
 ---

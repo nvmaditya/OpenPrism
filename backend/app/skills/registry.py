@@ -43,14 +43,29 @@ class SkillInfo:
 
 def _parse_skill_md(text: str) -> tuple[dict[str, Any], str]:
     """Parse optional YAML-like frontmatter + body from SKILL.md (stdlib only)."""
+    # Strip UTF-8 BOM if present (Windows editors / PowerShell Set-Content)
+    if text.startswith("\ufeff"):
+        text = text.lstrip("\ufeff")
+    text = text.lstrip()
     if not text.startswith("---"):
         return {}, text
     rest = text[3:]
+    # Allow optional whitespace after opening ---
+    if rest.startswith("\r\n"):
+        rest = rest[2:]
+    elif rest.startswith("\n"):
+        rest = rest[1:]
     end = rest.find("\n---")
     if end < 0:
         return {}, text
     meta_raw = rest[:end].strip()
-    body = rest[end + 4 :].lstrip("\n")
+    body = rest[end + 4 :]
+    # closing --- may be followed by newline
+    if body.startswith("\r\n"):
+        body = body[2:]
+    elif body.startswith("\n"):
+        body = body[1:]
+    body = body.lstrip("\n")
     meta: dict[str, Any] = {}
     for line in meta_raw.splitlines():
         line = line.strip()
@@ -64,6 +79,11 @@ def _parse_skill_md(text: str) -> tuple[dict[str, Any], str]:
             val = val[1:-1]
         meta[key.strip()] = val
     return meta, body
+
+
+def _read_text(path: Path) -> str:
+    """Read skill markdown; utf-8-sig strips BOM."""
+    return path.read_text(encoding="utf-8-sig")
 
 
 def _validate_name(name: str) -> str:
@@ -102,7 +122,7 @@ class SkillRegistry:
             if not skill_md.is_file():
                 continue
             try:
-                text = skill_md.read_text(encoding="utf-8")
+                text = _read_text(skill_md)
                 meta, _body = _parse_skill_md(text)
                 name = str(meta.get("name") or child.name).strip().lower()
                 desc = str(meta.get("description") or "").strip()
@@ -131,7 +151,7 @@ class SkillRegistry:
         ):
             skill_md = root / name / "SKILL.md"
             if skill_md.is_file():
-                text = skill_md.read_text(encoding="utf-8")
+                text = _read_text(skill_md)
                 meta, body = _parse_skill_md(text)
                 return {
                     "name": str(meta.get("name") or name),
@@ -139,7 +159,7 @@ class SkillRegistry:
                     "source": source,
                     "path": str(skill_md),
                     "body": body,
-                    "raw": text,
+                    "raw": text.lstrip("\ufeff"),
                 }
         raise SkillNotFound(name)
 
@@ -170,7 +190,7 @@ class SkillRegistry:
             raise SkillError(
                 f"no SKILL.md in {package_dir}", code="invalid_package"
             )
-        text = (package_dir / "SKILL.md").read_text(encoding="utf-8")
+        text = _read_text(package_dir / "SKILL.md")
         meta, _ = _parse_skill_md(text)
         skill_name = _validate_name(
             name or str(meta.get("name") or package_dir.name)

@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.domain.project import ProjectStore
+from app.domain.project import ProjectError, ProjectStore
 from app.skills.registry import SkillError, SkillRegistry
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
@@ -111,5 +111,11 @@ def plugin_scaffold(body: PluginScaffoldBody, request: Request) -> dict[str, Any
             version=body.version,
             description=body.description,
         )
+    except ProjectError as exc:
+        status = 404 if exc.code in ("not_found", "file_not_found") else 400
+        raise HTTPException(
+            status_code=status,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
     except SkillError as exc:
         raise _http(exc) from exc

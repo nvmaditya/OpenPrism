@@ -1,4 +1,4 @@
-﻿---
+---
 name: skill-installer
 description: Install skills from the curated catalog or a package path into PRISM_SKILL_HOME. Use when adding a skill for the agent to load.
 ---

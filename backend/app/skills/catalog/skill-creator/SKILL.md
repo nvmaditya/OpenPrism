@@ -1,4 +1,4 @@
-﻿---
+---
 name: skill-creator
 description: Create or revise reusable skill packages (SKILL.md + optional scripts/references). Use when designing a new skill or refining instructions.
 ---
