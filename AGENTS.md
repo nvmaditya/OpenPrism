@@ -136,6 +136,7 @@ Live imagegen/GitHub install require credentials and are optional; list/load/loc
 ## Changelog
 
 - Phase 0: Scaffold monorepo; document hard rules from source agents.md; health API only (no agent graph yet).
+- Phase 8 UI: Next dashboard + project IDE for feature verification; Groq via `GROQ_API_KEY`.
 - Shipping: require push of every 100% tested feature to github.com/nvmaditya/OpenPrism.
 - Phase 1: Multi-project domain — create/list/delete blank+example, zip import with zip-slip rejection, cross-project isolation, file read/write under project root.
 - Phase 2: Structured workspace tree + multipart upload; hardened path sandbox on tree/read/write/upload (`../` and absolute rejected).
