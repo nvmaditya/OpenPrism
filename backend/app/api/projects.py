@@ -1,0 +1,129 @@
+"""Project HTTP API."""
+
+from __future__ import annotations
+
+import base64
+import io
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel, Field
+
+from app.domain.project import ProjectError, ProjectKind, ProjectStore
+
+router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+
+class CreateProjectBody(BaseModel):
+    kind: ProjectKind = "blank"
+    name: str | None = None
+
+
+class WriteFileBody(BaseModel):
+    content: str = Field(default="")
+
+
+def _store(request: Request) -> ProjectStore:
+    return request.app.state.project_store  # type: ignore[attr-defined]
+
+
+def _http(exc: ProjectError) -> HTTPException:
+    status = 404 if exc.code in ("not_found", "file_not_found") else 400
+    return HTTPException(
+        status_code=status,
+        detail={"code": exc.code, "message": exc.message},
+    )
+
+
+@router.get("")
+def list_projects(request: Request) -> dict:
+    store = _store(request)
+    return {"projects": [p.to_dict() for p in store.list_projects()]}
+
+
+@router.post("")
+def create_project(body: CreateProjectBody, request: Request) -> dict:
+    store = _store(request)
+    try:
+        if body.kind == "import":
+            raise ProjectError(
+                "use POST /api/projects/import for zip import",
+                code="invalid_kind",
+            )
+        return store.create(kind=body.kind, name=body.name).to_dict()
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/import")
+async def import_project(
+    request: Request,
+    file: UploadFile = File(...),
+    name: str | None = Form(default=None),
+) -> dict:
+    store = _store(request)
+    try:
+        raw = await file.read()
+        return store.import_zip(io.BytesIO(raw), name=name).to_dict()
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.get("/{project_id}")
+def get_project(project_id: str, request: Request) -> dict:
+    store = _store(request)
+    try:
+        return store.get(project_id).to_dict()
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.delete("/{project_id}")
+def delete_project(project_id: str, request: Request) -> dict:
+    store = _store(request)
+    try:
+        store.delete(project_id)
+        return {"ok": True, "id": project_id}
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.get("/{project_id}/files")
+def list_files(project_id: str, request: Request) -> dict:
+    store = _store(request)
+    try:
+        return {"files": store.list_files(project_id)}
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.get("/{project_id}/files/{file_path:path}")
+def read_file(project_id: str, file_path: str, request: Request) -> dict:
+    store = _store(request)
+    try:
+        data = store.read_file(project_id, file_path)
+        try:
+            text = data.decode("utf-8")
+            return {"path": file_path, "encoding": "utf-8", "content": text}
+        except UnicodeDecodeError:
+            return {
+                "path": file_path,
+                "encoding": "base64",
+                "content": base64.b64encode(data).decode("ascii"),
+            }
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.put("/{project_id}/files/{file_path:path}")
+def write_file(
+    project_id: str,
+    file_path: str,
+    body: WriteFileBody,
+    request: Request,
+) -> dict:
+    store = _store(request)
+    try:
+        store.write_file(project_id, file_path, body.content)
+        return {"ok": True, "path": file_path}
+    except ProjectError as exc:
+        raise _http(exc) from exc

@@ -532,3 +532,8 @@ ext package; Phase 0 page is a dark dashboard shell (not full IDE).
 ## Phase 0 status
 
 - [x] Scaffold complete at `C:\Code\prism` (backend /health, frontend shell, AGENTS.md, PLAN.md, .env.example).
+
+## Phase 1 status
+
+- [x] Projects domain: create/list/delete blank+example, zip import, zip-slip rejection, isolation tests; pushed to OpenPrism.
+

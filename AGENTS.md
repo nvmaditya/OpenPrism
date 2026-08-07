@@ -31,6 +31,13 @@ You are working inside the Prism app that helps researchers write and edit files
 
 7. Prefer built-in packages directly for analysis, plotting, PDF parsing, and symbolic math.
 
+## Project APIs (Phase 1)
+
+- `GET/POST /api/projects` — list / create (`kind`: `blank` | `example`)
+- `POST /api/projects/import` — zip import (zip-slip rejected)
+- `GET/DELETE /api/projects/{id}`
+- `GET/PUT /api/projects/{id}/files/...` — read/write project files (workspace-scoped)
+
 ## Available LaTeX Tools
 
 (Registered in later phases.)
@@ -57,4 +64,5 @@ You are working inside the Prism app that helps researchers write and edit files
 
 - Phase 0: Scaffold monorepo; document hard rules from source agents.md; health API only (no agent graph yet).
 - Shipping: require push of every 100% tested feature to github.com/nvmaditya/OpenPrism.
+- Phase 1: Multi-project domain — create/list/delete blank+example, zip import with zip-slip rejection, cross-project isolation, file read/write under project root.
 
