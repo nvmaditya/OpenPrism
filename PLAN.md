@@ -552,3 +552,8 @@ ext package; Phase 0 page is a dark dashboard shell (not full IDE).
 
 - [x] TeX allowlist runner + compile logs; pushed to OpenPrism.
 
+
+## Phase 5 status
+
+- [x] PDF serve + preview root isolation; pushed to OpenPrism.
+

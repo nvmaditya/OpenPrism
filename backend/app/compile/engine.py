@@ -36,6 +36,11 @@ class CompileResult:
     pdf_path: str | None
 
     def to_dict(self) -> dict[str, Any]:
+        pdf_url = (
+            f"/api/projects/{self.project_id}/pdf?path={self.pdf_path}"
+            if self.pdf_path
+            else None
+        )
         return {
             "project_id": self.project_id,
             "log_id": self.log_id,
@@ -45,6 +50,9 @@ class CompileResult:
             "returncode": self.returncode,
             "duration_ms": self.duration_ms,
             "pdf_path": self.pdf_path,
+            "pdf_available": bool(self.pdf_path),
+            "pdf_url": pdf_url,
+            "log_url": f"/api/projects/{self.project_id}/logs/{self.log_id}",
             # full log also persisted; include for convenience on compile response
             "log": self.log_text,
         }

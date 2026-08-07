@@ -88,6 +88,22 @@ Allowlisted binaries only (server rejects others):
 - Subprocess **cwd** = project root; no shell; bare tool names only (no path-like tool).
 - Logs stored under project `.prism/logs/{log_id}.log` (+ `.json` meta), still inside the project workspace.
 - Prefer `latexmk -pdf` for multi-pass docs; `pdflatex` for simple PDF builds.
+- Compile response includes `log_id`, `log_url`, `pdf_path`, `pdf_available`, `pdf_url` when a PDF is produced.
+
+## PDF serve + previews (Phase 5)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/projects/{id}/pdf?path=main.pdf` | Serve compiled PDF bytes (`application/pdf`) from project workspace |
+| `POST` | `/api/projects/{id}/previews/render` | Rasterize pages into **preview root** only; returns `run_id`, `page_urls` |
+| `GET` | `/api/projects/{id}/previews/{run_id}` | List page images for a render run |
+| `GET` | `/api/projects/{id}/previews/{run_id}/page-N.png` | Fetch one page PNG |
+
+### Preview isolation (hard rule)
+
+- Page images (`page-1.png`, …) are written only under `PRISM_PREVIEW_ROOT/{project_id}/{run_id}/`.
+- **Never** write generated PDF preview images into the project paper tree by default.
+- Use `view_image` / preview URLs from the preview root, not from the project workspace.
 
 ## Available Agent Skills
 
@@ -107,4 +123,5 @@ Allowlisted binaries only (server rejects others):
 - Phase 2: Structured workspace tree + multipart upload; hardened path sandbox on tree/read/write/upload (`../` and absolute rejected).
 - Phase 3: Provider-pluggable `get_chat_model` (openai/azure/ollama/anthropic/custom) + LangGraph agent with project-scoped FS tools; mock-driven tests.
 - Phase 4: Allowlisted TeX subprocess runner; project compile + retrievable logs (`latexmk`/`pdflatex`/…).
+- Phase 5: PDF serve (`/pdf`) + page previews under isolated `PRISM_PREVIEW_ROOT` (pdftoppm or Pillow fallback).
 
