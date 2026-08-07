@@ -181,7 +181,7 @@ def test_path_escape_write_read_upload_tree(
     assert r.status_code == 400
     assert r.json()["detail"]["code"] == "path_escape"
 
-    # upload escape via dest
+    # upload escape via dest (relative ..)
     up = client.post(
         f"/api/projects/{pid}/upload",
         files={"file": ("x.bin", b"x", "application/octet-stream")},
@@ -190,6 +190,33 @@ def test_path_escape_write_read_upload_tree(
     assert up.status_code == 400
     assert up.json()["detail"]["code"] == "path_escape"
     assert not (projects_root.parent / "outside.bin").exists()
+
+    # absolute POSIX dest must 4xx — not silently rewrite to project-relative etc/passwd
+    up_abs = client.post(
+        f"/api/projects/{pid}/upload",
+        files={"file": ("passwd", b"pwn", "application/octet-stream")},
+        data={"path": "/etc/passwd"},
+    )
+    assert up_abs.status_code == 400, up_abs.text
+    assert up_abs.json()["detail"]["code"] == "path_escape"
+    assert not (projects_root / pid / "etc" / "passwd").exists()
+
+    up_abs_dir = client.post(
+        f"/api/projects/{pid}/upload",
+        files={"file": ("x.bin", b"x", "application/octet-stream")},
+        data={"path": "/abs/dir/"},
+    )
+    assert up_abs_dir.status_code == 400, up_abs_dir.text
+    assert up_abs_dir.json()["detail"]["code"] == "path_escape"
+    assert not (projects_root / pid / "abs").exists()
+
+    up_win = client.post(
+        f"/api/projects/{pid}/upload",
+        files={"file": ("x.bin", b"x", "application/octet-stream")},
+        data={"path": r"C:\Windows\system32"},
+    )
+    assert up_win.status_code == 400, up_win.text
+    assert up_win.json()["detail"]["code"] == "path_escape"
 
     # tree subpath escape
     t = client.get(f"/api/projects/{pid}/tree", params={"path": "../"})

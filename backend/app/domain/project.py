@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
-from app.sandbox.paths import PathEscapeError, is_within, resolve_under
+from app.sandbox.paths import PathEscapeError, is_within, looks_absolute, resolve_under
 
 ProjectKind = Literal["blank", "example", "import"]
 
@@ -301,6 +301,12 @@ class ProjectStore:
             raise ProjectError("invalid filename", code="invalid_path")
 
         if dest:
+            # Must reject absolute dests before any strip("/") rewrite
+            if looks_absolute(dest):
+                raise ProjectError(
+                    f"absolute paths are not allowed: {dest}",
+                    code="path_escape",
+                )
             raw_dest = dest.replace("\\", "/")
             # Directory dest (trailing slash) or bare folder name → join filename
             if raw_dest.endswith("/") or (
@@ -309,9 +315,18 @@ class ProjectStore:
                 and Path(raw_dest.rstrip("/")).name != safe_name
             ):
                 folder = raw_dest.strip("/")
+                # strip only after absolute check; empty folder after strip of "/" alone
+                # is absolute and already rejected above
                 target_rel = f"{folder}/{safe_name}" if folder else safe_name
             else:
-                target_rel = raw_dest.strip("/")
+                # Do not strip a leading slash (absolute); already rejected.
+                # Strip only trailing slash for file targets.
+                target_rel = raw_dest.rstrip("/")
+                if looks_absolute(target_rel) or target_rel.startswith("/"):
+                    raise ProjectError(
+                        f"absolute paths are not allowed: {dest}",
+                        code="path_escape",
+                    )
         else:
             target_rel = f"prism-uploads/{safe_name}"
 

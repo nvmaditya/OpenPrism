@@ -33,3 +33,14 @@ def test_resolve_under_ok(tmp_path: Path):
     p = resolve_under(root, "figs/a.png")
     assert is_within(root, p)
     assert p == (root / "figs" / "a.png").resolve()
+
+
+def test_looks_absolute():
+    from app.sandbox.paths import looks_absolute
+
+    assert looks_absolute("/etc/passwd") is True
+    assert looks_absolute("/abs/dir/") is True
+    assert looks_absolute(r"C:\Windows\system32") is True
+    assert looks_absolute("C:/Windows/system32") is True
+    assert looks_absolute("prism-uploads/x.bin") is False
+    assert looks_absolute("../x") is False

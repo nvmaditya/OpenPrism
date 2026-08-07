@@ -14,7 +14,8 @@ _ABS_WIN = re.compile(r"^[A-Za-z]:[/\\]")
 _UNC = re.compile(r"^\\\\")
 
 
-def _looks_absolute(relative: str | Path) -> bool:
+def looks_absolute(relative: str | Path) -> bool:
+    """True if ``relative`` is an absolute POSIX, Windows, or UNC path."""
     s = str(relative).replace("\\", "/")
     if not s:
         return False
@@ -30,6 +31,10 @@ def _looks_absolute(relative: str | Path) -> bool:
     if PureWindowsPath(relative).is_absolute() or PurePosixPath(s).is_absolute():
         return True
     return False
+
+
+# Back-compat alias
+_looks_absolute = looks_absolute
 
 
 def normalize_rel(relative: str | Path) -> str:
