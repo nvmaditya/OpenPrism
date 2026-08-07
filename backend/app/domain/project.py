@@ -231,6 +231,95 @@ class ProjectStore:
             out.append(rel)
         return out
 
+    def tree(self, project_id: str, subpath: str = "") -> dict[str, Any]:
+        """Return a nested directory tree (files + dirs) under the project root."""
+        project_dir = self._project_dir(project_id)
+        if not project_dir.is_dir():
+            raise ProjectNotFound(project_id)
+
+        if subpath:
+            try:
+                base = resolve_under(project_dir, subpath)
+            except PathEscapeError as exc:
+                raise ProjectError(str(exc), code="path_escape") from exc
+            if not base.exists():
+                raise ProjectError(f"path not found: {subpath}", code="file_not_found")
+            if not base.is_dir():
+                raise ProjectError(f"not a directory: {subpath}", code="not_a_directory")
+        else:
+            base = project_dir
+
+        def walk(dir_path: Path) -> dict[str, Any]:
+            rel = (
+                ""
+                if dir_path == project_dir
+                else dir_path.relative_to(project_dir).as_posix()
+            )
+            node: dict[str, Any] = {
+                "name": dir_path.name if dir_path != project_dir else project_id,
+                "path": rel,
+                "type": "dir",
+                "children": [],
+            }
+            try:
+                entries = sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+            except OSError:
+                return node
+            for entry in entries:
+                if entry.name == META_DIR:
+                    continue
+                if entry.is_dir():
+                    node["children"].append(walk(entry))
+                elif entry.is_file():
+                    child_rel = entry.relative_to(project_dir).as_posix()
+                    node["children"].append(
+                        {
+                            "name": entry.name,
+                            "path": child_rel,
+                            "type": "file",
+                            "size": entry.stat().st_size,
+                        }
+                    )
+            return node
+
+        return walk(base)
+
+    def upload_file(
+        self,
+        project_id: str,
+        *,
+        filename: str,
+        content: bytes,
+        dest: str | None = None,
+    ) -> dict[str, Any]:
+        """Upload bytes to a relative path inside the project (default prism-uploads/)."""
+        if not filename or filename in (".", ".."):
+            raise ProjectError("invalid filename", code="invalid_path")
+        # Filename alone must not escape
+        safe_name = Path(filename.replace("\\", "/")).name
+        if not safe_name or safe_name in (".", ".."):
+            raise ProjectError("invalid filename", code="invalid_path")
+
+        if dest:
+            raw_dest = dest.replace("\\", "/")
+            # Directory dest (trailing slash) or bare folder name → join filename
+            if raw_dest.endswith("/") or (
+                "/" not in raw_dest.rstrip("/")
+                and Path(raw_dest.rstrip("/")).suffix == ""
+                and Path(raw_dest.rstrip("/")).name != safe_name
+            ):
+                folder = raw_dest.strip("/")
+                target_rel = f"{folder}/{safe_name}" if folder else safe_name
+            else:
+                target_rel = raw_dest.strip("/")
+        else:
+            target_rel = f"prism-uploads/{safe_name}"
+
+        path = self.write_file(project_id, target_rel, content)
+        project_dir = self._project_dir(project_id)
+        final_rel = path.relative_to(project_dir).as_posix()
+        return {"path": final_rel, "size": len(content), "ok": True}
+
     def import_zip(
         self,
         zip_stream: BinaryIO,

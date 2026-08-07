@@ -2,27 +2,65 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 class PathEscapeError(ValueError):
     """Raised when a path would leave the allowed root."""
 
 
+_ABS_WIN = re.compile(r"^[A-Za-z]:[/\\]")
+_UNC = re.compile(r"^\\\\")
+
+
+def _looks_absolute(relative: str | Path) -> bool:
+    s = str(relative).replace("\\", "/")
+    if not s:
+        return False
+    if s.startswith("/"):
+        return True
+    if _ABS_WIN.match(str(relative)) or _ABS_WIN.match(s):
+        return True
+    if _UNC.match(str(relative)):
+        return True
+    # pathlib absolute on current OS
+    if Path(relative).is_absolute():
+        return True
+    if PureWindowsPath(relative).is_absolute() or PurePosixPath(s).is_absolute():
+        return True
+    return False
+
+
+def normalize_rel(relative: str | Path) -> str:
+    """Normalize a relative path to posix form without leading ./."""
+    s = str(relative).replace("\\", "/").strip()
+    if s.startswith("./"):
+        s = s[2:]
+    return s
+
+
 def resolve_under(root: Path, relative: str | Path) -> Path:
     """Resolve ``relative`` under ``root``; reject escapes and absolute paths."""
     root = root.resolve()
-    rel = Path(relative)
-    if rel.is_absolute():
+    if _looks_absolute(relative):
         raise PathEscapeError(f"absolute paths are not allowed: {relative}")
-    # Disallow Windows drive-style and parent segments in the *logical* path
-    parts = rel.parts
-    if any(p in ("..", "") for p in parts if p == ".."):
-        raise PathEscapeError(f"path escapes root: {relative}")
-    if ".." in parts:
+
+    s = normalize_rel(relative)
+    if s in ("", "."):
+        return root
+
+    parts = [p for p in s.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts):
         raise PathEscapeError(f"path escapes root: {relative}")
 
-    candidate = (root / rel).resolve()
+    candidate = root
+    for part in parts:
+        if part == "..":
+            raise PathEscapeError(f"path escapes root: {relative}")
+        candidate = candidate / part
+
+    candidate = candidate.resolve()
     try:
         candidate.relative_to(root)
     except ValueError as exc:

@@ -537,3 +537,8 @@ ext package; Phase 0 page is a dark dashboard shell (not full IDE).
 
 - [x] Projects domain: create/list/delete blank+example, zip import, zip-slip rejection, isolation tests; pushed to OpenPrism.
 
+
+## Phase 2 status
+
+- [x] Sandbox FS: structured tree, upload, path escape tests; pushed to OpenPrism.
+

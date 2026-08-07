@@ -31,12 +31,21 @@ You are working inside the Prism app that helps researchers write and edit files
 
 7. Prefer built-in packages directly for analysis, plotting, PDF parsing, and symbolic math.
 
-## Project APIs (Phase 1)
+## Project & FS APIs (Phase 1–2)
 
 - `GET/POST /api/projects` — list / create (`kind`: `blank` | `example`)
 - `POST /api/projects/import` — zip import (zip-slip rejected)
 - `GET/DELETE /api/projects/{id}`
-- `GET/PUT /api/projects/{id}/files/...` — read/write project files (workspace-scoped)
+- `GET /api/projects/{id}/files` — flat file path list
+- `GET /api/projects/{id}/tree` — **structured** directory tree (dirs + files + sizes); optional `?path=` subdir
+- `POST /api/projects/{id}/upload` — multipart upload (`file`, optional form `path` dest dir/file); default `prism-uploads/<filename>`
+- `GET/PUT /api/projects/{id}/files/{path}` — read/write project files (text JSON or base64 for binary)
+
+### FS sandbox (agents must respect; server enforces)
+
+- All paths are **relative to the project root** only.
+- Reject `..` segments and absolute paths (`/…`, `C:\…`); never write outside the project storage root.
+- Prefer `prism-uploads/` for user assets (images, etc.).
 
 ## Available LaTeX Tools
 
@@ -65,4 +74,5 @@ You are working inside the Prism app that helps researchers write and edit files
 - Phase 0: Scaffold monorepo; document hard rules from source agents.md; health API only (no agent graph yet).
 - Shipping: require push of every 100% tested feature to github.com/nvmaditya/OpenPrism.
 - Phase 1: Multi-project domain — create/list/delete blank+example, zip import with zip-slip rejection, cross-project isolation, file read/write under project root.
+- Phase 2: Structured workspace tree + multipart upload; hardened path sandbox on tree/read/write/upload (`../` and absolute rejected).
 

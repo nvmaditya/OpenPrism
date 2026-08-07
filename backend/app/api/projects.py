@@ -96,6 +96,38 @@ def list_files(project_id: str, request: Request) -> dict:
         raise _http(exc) from exc
 
 
+@router.get("/{project_id}/tree")
+def get_tree(project_id: str, request: Request, path: str = "") -> dict:
+    """Structured directory tree (dirs + files), not a flat path list."""
+    store = _store(request)
+    try:
+        return {"tree": store.tree(project_id, subpath=path)}
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/{project_id}/upload")
+async def upload_file(
+    project_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    path: str | None = Form(default=None),
+) -> dict:
+    """Upload a binary or text asset into the project workspace."""
+    store = _store(request)
+    try:
+        raw = await file.read()
+        filename = file.filename or "upload.bin"
+        return store.upload_file(
+            project_id,
+            filename=filename,
+            content=raw,
+            dest=path,
+        )
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
 @router.get("/{project_id}/files/{file_path:path}")
 def read_file(project_id: str, file_path: str, request: Request) -> dict:
     store = _store(request)
