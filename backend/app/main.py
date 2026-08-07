@@ -3,7 +3,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.compile import router as compile_router
 from app.api.projects import router as projects_router
+from app.compile.engine import CompileEngine
 from app.domain.project import ProjectStore
 from app.health import health_payload
 from app.settings import Settings, get_settings
@@ -17,6 +19,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     projects_root.mkdir(parents=True, exist_ok=True)
 
     store = ProjectStore(projects_root)
+    compile_engine = CompileEngine(store)
 
     app = FastAPI(title="Prism API", version="0.1.0")
     app.add_middleware(
@@ -31,10 +34,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict:
         return health_payload()
 
+    # compile_router first so static paths like /api/projects/tools win over {project_id}
+    app.include_router(compile_router)
     app.include_router(projects_router)
 
     app.state.settings = settings  # type: ignore[attr-defined]
     app.state.project_store = store  # type: ignore[attr-defined]
+    app.state.compile_engine = compile_engine  # type: ignore[attr-defined]
     return app
 
 

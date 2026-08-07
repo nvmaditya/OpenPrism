@@ -72,17 +72,22 @@ Also: `PRISM_LLM_MODEL`, `PRISM_LLM_API_KEY`, `PRISM_LLM_BASE_URL`.
 - Inject a chat model for tests (e.g. scripted tool-calling model); production uses `get_chat_model(settings)`.
 - SSE/HTTP chat streaming is a later phase; this phase is the invoke entry + tools.
 
-## Available LaTeX Tools
+## LaTeX tools + compile (Phase 4)
 
-(Registered in later phases.)
+Allowlisted binaries only (server rejects others):  
+`latexmk`, `pdflatex`, `xelatex`, `lualatex`, `latex`, `bibtex`, `biber`, `makeindex`, `dvipdfmx`, `kpsewhich`.
 
-- `latexmk` — automated compilation and dependency handling
-- `pdflatex`, `xelatex`, `lualatex` — LaTeX compilers
-- `latex` — DVI output
-- `bibtex`, `biber` — bibliography processors
-- `makeindex` — index generator
-- `dvipdfmx` — DVI-to-PDF converter
-- `kpsewhich` — find packages/fonts
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/projects/tools` | List allowlisted tool names |
+| `POST` | `/api/projects/{id}/compile` | Compile `main_file` with `engine` (default `latexmk`); returns `log_id`, `success`, `log`, optional `pdf_path` |
+| `POST` | `/api/projects/{id}/tools/run` | Run one allowlisted tool with `args` in project cwd |
+| `GET` | `/api/projects/{id}/logs` | List compile/tool run metas |
+| `GET` | `/api/projects/{id}/logs/{log_id}` | Fetch full log text + meta |
+
+- Subprocess **cwd** = project root; no shell; bare tool names only (no path-like tool).
+- Logs stored under project `.prism/logs/{log_id}.log` (+ `.json` meta), still inside the project workspace.
+- Prefer `latexmk -pdf` for multi-pass docs; `pdflatex` for simple PDF builds.
 
 ## Available Agent Skills
 
@@ -101,4 +106,5 @@ Also: `PRISM_LLM_MODEL`, `PRISM_LLM_API_KEY`, `PRISM_LLM_BASE_URL`.
 - Phase 1: Multi-project domain — create/list/delete blank+example, zip import with zip-slip rejection, cross-project isolation, file read/write under project root.
 - Phase 2: Structured workspace tree + multipart upload; hardened path sandbox on tree/read/write/upload (`../` and absolute rejected).
 - Phase 3: Provider-pluggable `get_chat_model` (openai/azure/ollama/anthropic/custom) + LangGraph agent with project-scoped FS tools; mock-driven tests.
+- Phase 4: Allowlisted TeX subprocess runner; project compile + retrievable logs (`latexmk`/`pdflatex`/…).
 

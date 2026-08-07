@@ -547,3 +547,8 @@ ext package; Phase 0 page is a dark dashboard shell (not full IDE).
 
 - [x] Provider factory + LangGraph FS agent skeleton; mock tests; pushed to OpenPrism.
 
+
+## Phase 4 status
+
+- [x] TeX allowlist runner + compile logs; pushed to OpenPrism.
+
