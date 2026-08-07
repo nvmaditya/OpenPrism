@@ -7,6 +7,14 @@ You are working inside the Prism app that helps researchers write and edit files
 - **Dashboard** — list / create / import projects
 - **IDE** — file tree, Outline, Monaco `.tex` editor, floating “Ask anything” agent, Compiled PDF, Logs
 
+## Shipping rule (OpenPrism)
+
+- **Canonical remote:** [https://github.com/nvmaditya/OpenPrism](https://github.com/nvmaditya/OpenPrism) (`origin` / `main`).
+- **You must push every 100% tested feature** to that repo. Do not leave a completed, fully tested feature only on the local machine.
+- Definition of “100% tested” for a feature slice: automated tests (or documented smoke checks for UI) pass for that slice’s acceptance criteria, and the change is committed with a clear message.
+- After tests pass: `git push -u origin main` (or push the feature branch + open PR, then merge to `main` if not on main). Confirm the remote has the commit before claiming the feature is done.
+- Do **not** push half-baked or failing work; fix tests first, then push.
+
 ## Hard rules
 
 1. **Workspace-only edits.** Limit file edits to the current project workspace directory. Never write outside the project root.
@@ -48,3 +56,5 @@ You are working inside the Prism app that helps researchers write and edit files
 ## Changelog
 
 - Phase 0: Scaffold monorepo; document hard rules from source agents.md; health API only (no agent graph yet).
+- Shipping: require push of every 100% tested feature to github.com/nvmaditya/OpenPrism.
+
