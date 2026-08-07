@@ -496,8 +496,9 @@ Ship a **Prism-like end-user** dashboard + project editor. Hide developer/debug 
 6. PR5 PDF compiled  
 7. PR6 Skills  
 8. PR7 SSE chat  
-9. PR8 Next dashboard + IDE  
-10. PR9 Harden + ship  
+9. PR8 End-user Prism UX + abstraction  
+10. PR9 Outline / import / stubs  
+11. PR10 Harden + ship  
 
 Each PR that changes agent surface updates **`AGENTS.md` changelog**.
 
