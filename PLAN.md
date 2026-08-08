@@ -1,3 +1,5 @@
+> **Last auto-ship:** 2026-08-08 06:24 UTC · docs/SHIPLOG.md
+
 # Prism Reverse-Engineer — Implementation Plan
 
 > **Status:** Phases **0–8 complete** on https://github.com/nvmaditya/OpenPrism · **Next: Phase 9** (outline, import polish, stubs)  

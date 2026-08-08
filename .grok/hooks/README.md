@@ -1,34 +1,38 @@
-# OpenPrism Grok hooks
+# OpenPrism Grok hooks — automatic ship
 
-## What they do
+## Behavior (every agent turn end)
 
-| Event | Script | Behavior |
-|-------|--------|----------|
-| `PostToolUse` (shell) | `bin/post_test_mark.py` | If a `pytest` command looks successful, writes `state/last_pytest_ok` |
-| `Stop` (`end_turn`) | `bin/stop_ship_gate.py` | **Ship gate** for this repo only (origin contains `OpenPrism`) |
+On **`Stop`** with `reason=end_turn` in this repo:
 
-### Ship gate (Stop)
+1. **Tests** — green required (uses recent pytest marker or runs `backend` pytest).
+2. **Docs** — appends `docs/SHIPLOG.md` and stamps `PLAN.md` “Last auto-ship”.
+3. **Commit** — `git add -A` + commit if the tree is dirty (`.env` stays ignored).
+4. **Push** — `git push origin main` if local is ahead of `origin/main`.
 
-When the agent tries to finish a turn and this is the OpenPrism workspace:
+If tests or push fail, the hook **blocks** stop and feeds the error back to the agent.
 
-1. **Tests** — must be green (recent pytest marker or runs `backend` pytest).
-2. **Docs + commit** — if the working tree is dirty, blocks stop and requires:
-   - update `PLAN.md` / `AGENTS.md` when the product or agent surface changed
-   - `git commit`
-3. **Push** — if local commits are ahead of `origin/main`, blocks stop until:
-   - `git push origin main`
+If everything is already clean and pushed, the turn ends normally.
 
-Hooks **fail open** on crashes (Grok default). An explicit `decision: block` is required to keep the agent working.
+## Files
 
-## Enable in this project
+| File | Role |
+|------|------|
+| `feature-ship.json` | Registers PostToolUse + Stop |
+| `bin/auto_ship.py` | Auto docs → commit → push |
+| `bin/post_test_mark.py` | Marks successful pytest for the gate |
+| `bin/stop_ship_gate.py` | Thin wrapper → `auto_ship.py` |
 
-1. Open the project in Grok: `C:\Code\prism`
-2. Trust hooks: `/hooks-trust` (or launch with `--trust`)
-3. Reload hooks: `/hooks` → `r`, or restart the session
-4. Confirm **feature-ship** is listed under Project hooks
+## Enable
 
-## Required agent sequence (after a feature)
+1. Work in `C:\Code\prism`
+2. `/hooks-trust` (once) if project hooks are not trusted
+3. `/hooks` → `r` to reload
 
-```
-implement → pytest green → update PLAN.md/AGENTS.md if needed → commit → git push origin main → then stop
+## Manual dry-run
+
+```powershell
+cd C:\Code\prism
+.\.venv\Scripts\python.exe .grok\hooks\bin\auto_ship.py
+# or with envelope:
+echo '{"reason":"end_turn","workspaceRoot":"C:\\Code\\prism"}' | .\.venv\Scripts\python.exe .grok\hooks\bin\auto_ship.py
 ```

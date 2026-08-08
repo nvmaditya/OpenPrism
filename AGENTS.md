@@ -13,18 +13,19 @@ You are working inside the Prism app that helps researchers write and edit files
 - **You must push every 100% tested feature** to that repo. Do not leave a completed, fully tested feature only on the local machine.
 - Definition of “100% tested”: automated tests (or documented smoke checks) pass for the slice’s acceptance criteria.
 
-### Required sequence after a feature (enforced by Grok project hooks)
+### Required sequence after a feature (automatic via Grok hooks)
 
 1. **Implement** the feature.
-2. **Test** (`pytest` / smoke) until green.
-3. **Update documentation** when the product or agent surface changed (`PLAN.md` phase status; `AGENTS.md` for agent-facing API/tools — not drive-by README fluff).
-4. **Commit** with a clear message.
-5. **`git push origin main`** and confirm the remote has the commit.
-6. Only then claim the feature done / end the turn.
+2. **Test** until green (`pytest` preferred — a successful run marks the ship gate).
+3. On **turn end**, project hooks **auto-ship**:
+   - stamp `docs/SHIPLOG.md` + `PLAN.md` last-ship line
+   - `git commit` if dirty
+   - `git push origin main` if ahead
+4. If tests or push fail, the **Stop** hook blocks and you must fix, then finish again.
 
-Do **not** push half-baked or failing work. Do **not** finish a turn with a dirty tree or unpushed commits on this repo (Stop hook will block and re-prompt).
+Still prefer meaningful commits and agent-facing `AGENTS.md` updates when the surface changes; the hook guarantees a docs stamp + remote sync even if you forget.
 
-Hooks live in `.grok/hooks/` (`feature-ship.json`). Trust the project with `/hooks-trust` so they run.
+Hooks: `.grok/hooks/feature-ship.json` → `bin/auto_ship.py`. Trust with `/hooks-trust`; reload with `/hooks` → `r`.
 
 ## Hard rules
 
