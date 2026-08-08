@@ -116,6 +116,59 @@ export async function uploadFile(
   );
 }
 
+export async function uploadFiles(
+  projectId: string,
+  files: File[],
+  destFolder?: string,
+): Promise<{ path: string }[]> {
+  const out: { path: string }[] = [];
+  for (const file of files) {
+    const dest = destFolder
+      ? `${destFolder.replace(/\/$/, "")}/${file.name}`
+      : undefined;
+    out.push(await uploadFile(projectId, file, dest));
+  }
+  return out;
+}
+
+export async function renameFile(
+  projectId: string,
+  fromPath: string,
+  toPath: string,
+): Promise<void> {
+  await json(
+    await fetch(apiUrl(`/api/projects/${projectId}/files/rename`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from: fromPath, to: toPath }),
+    }),
+  );
+}
+
+export async function deleteFiles(
+  projectId: string,
+  paths: string[],
+): Promise<{ deleted: string[]; errors: { path: string; message: string }[] }> {
+  return json(
+    await fetch(apiUrl(`/api/projects/${projectId}/files/delete`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths }),
+    }),
+  );
+}
+
+export async function deleteFile(
+  projectId: string,
+  path: string,
+): Promise<void> {
+  await json(
+    await fetch(filePathUrl(projectId, path), {
+      method: "DELETE",
+    }),
+  );
+}
+
 export async function compileProject(
   projectId: string,
   engine: string = "pdflatex",

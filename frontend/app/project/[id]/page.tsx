@@ -18,7 +18,6 @@ import {
   Play,
   Save,
   ScrollText,
-  Upload,
 } from "lucide-react";
 import {
   TreeNode,
@@ -29,72 +28,11 @@ import {
   readFile,
   renderPreviews,
   streamChat,
-  uploadFile,
   writeFile,
 } from "@/lib/api";
+import { FilePanel } from "@/components/FilePanel";
 
 type ChatLine = { role: "user" | "assistant"; text: string };
-
-function fileIcon(name: string) {
-  if (name.endsWith(".tex") || name.endsWith(".bib") || name.endsWith(".sty")) {
-    return FileCode2;
-  }
-  return FileText;
-}
-
-function TreeView({
-  node,
-  depth,
-  active,
-  onOpen,
-}: {
-  node: TreeNode;
-  depth: number;
-  active: string | null;
-  onOpen: (path: string) => void;
-}) {
-  const pad = { paddingLeft: 10 + depth * 12 };
-  if (node.type === "file") {
-    const Icon = fileIcon(node.name);
-    return (
-      <button
-        type="button"
-        style={pad}
-        onClick={() => onOpen(node.path)}
-        className={`flex w-full items-center gap-1.5 text-left py-1 text-sm truncate rounded-sm ${
-          active === node.path
-            ? "bg-zinc-800 text-zinc-50"
-            : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-        }`}
-      >
-        <Icon className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
-        <span className="truncate">{node.name}</span>
-      </button>
-    );
-  }
-  return (
-    <div>
-      {node.path !== "" && (
-        <div
-          style={pad}
-          className="flex items-center gap-1.5 py-1 text-xs text-zinc-500 font-medium"
-        >
-          <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          {node.name}
-        </div>
-      )}
-      {(node.children || []).map((c) => (
-        <TreeView
-          key={c.path || c.name}
-          node={c}
-          depth={node.path === "" ? depth : depth + 1}
-          active={active}
-          onOpen={onOpen}
-        />
-      ))}
-    </div>
-  );
-}
 
 export default function ProjectIdePage() {
   const params = useParams();
@@ -189,17 +127,6 @@ export default function ProjectIdePage() {
       setCompileStatus("failed");
       setError(e instanceof Error ? e.message : String(e));
       setRightTab("logs");
-    }
-  }
-
-  async function onUpload(file: File | null) {
-    if (!file) return;
-    setError(null);
-    try {
-      await uploadFile(projectId, file, "prism-uploads");
-      await refreshTree();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -322,15 +249,6 @@ export default function ProjectIdePage() {
         </Link>
         <span className="font-medium truncate max-w-[200px]">{projectName}</span>
         <div className="ml-auto flex items-center gap-2">
-          <label className="inline-flex items-center gap-1.5 text-xs text-zinc-400 border border-zinc-700 rounded-md px-2.5 py-1.5 cursor-pointer hover:bg-zinc-900">
-            <Upload className="h-3.5 w-3.5" aria-hidden />
-            Add file
-            <input
-              type="file"
-              className="hidden"
-              onChange={(e) => void onUpload(e.target.files?.[0] || null)}
-            />
-          </label>
           <button
             type="button"
             onClick={() => void onCompile()}
@@ -391,20 +309,32 @@ export default function ProjectIdePage() {
               Chats
             </button>
           </div>
-          <div className="flex-1 overflow-auto py-2 px-1">
-            {leftTab === "files" &&
-              (tree ? (
-                <TreeView
-                  node={tree}
-                  depth={0}
-                  active={openPath}
-                  onOpen={(p) => void openFile(p)}
-                />
-              ) : (
-                <p className="px-2 text-xs text-zinc-600">Loading…</p>
-              ))}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {leftTab === "files" && (
+              <FilePanel
+                projectId={projectId}
+                tree={tree}
+                openPath={openPath}
+                onOpen={(p) => void openFile(p)}
+                onRefresh={refreshTree}
+                onError={(m) => setError(m)}
+                onDeleted={(paths) => {
+                  if (openPath && paths.includes(openPath)) {
+                    setOpenPath(null);
+                    setContent("");
+                    setDirty(false);
+                  }
+                }}
+                onRenamed={(from, to) => {
+                  if (openPath === from) {
+                    setOpenPath(to);
+                    void openFile(to);
+                  }
+                }}
+              />
+            )}
             {leftTab === "chats" && (
-              <div className="px-2 py-2 text-xs text-zinc-500 space-y-2">
+              <div className="px-2 py-2 text-xs text-zinc-500 space-y-2 h-full overflow-auto">
                 <p>Current conversation</p>
                 {chatLines.length === 0 && (
                   <p className="text-zinc-600">No messages yet. Ask anything below.</p>

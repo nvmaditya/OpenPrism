@@ -226,5 +226,45 @@ def test_path_escape_write_read_upload_tree(
     assert not outside.exists()
 
 
+def test_delete_and_rename_files(client: TestClient, projects_root: Path):
+    pid = _create(client)
+    client.put(
+        f"/api/projects/{pid}/files/a.txt",
+        json={"content": "aaa"},
+    )
+    client.put(
+        f"/api/projects/{pid}/files/b.txt",
+        json={"content": "bbb"},
+    )
+    ren = client.post(
+        f"/api/projects/{pid}/files/rename",
+        json={"from": "a.txt", "to": "renamed.txt"},
+    )
+    assert ren.status_code == 200, ren.text
+    assert ren.json()["to"] == "renamed.txt"
+    assert (projects_root / pid / "renamed.txt").is_file()
+    assert not (projects_root / pid / "a.txt").exists()
+
+    batch = client.post(
+        f"/api/projects/{pid}/files/delete",
+        json={"paths": ["renamed.txt", "b.txt"]},
+    )
+    assert batch.status_code == 200, batch.text
+    assert set(batch.json()["deleted"]) == {"renamed.txt", "b.txt"}
+    assert not (projects_root / pid / "renamed.txt").exists()
+    assert not (projects_root / pid / "b.txt").exists()
+
+
+def test_delete_file_escape_rejected(client: TestClient):
+    pid = _create(client)
+    from urllib.parse import quote
+
+    r = client.delete(
+        f"/api/projects/{pid}/files/{quote('../outside.txt', safe='')}"
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "path_escape"
+
+
 def test_health_ok(client: TestClient):
     assert client.get("/health").status_code == 200

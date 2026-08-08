@@ -22,6 +22,17 @@ class WriteFileBody(BaseModel):
     content: str = Field(default="")
 
 
+class RenameFileBody(BaseModel):
+    from_path: str = Field(alias="from")
+    to_path: str = Field(alias="to")
+
+    model_config = {"populate_by_name": True}
+
+
+class DeleteFilesBody(BaseModel):
+    paths: list[str] = Field(min_length=1)
+
+
 def _store(request: Request) -> ProjectStore:
     return request.app.state.project_store  # type: ignore[attr-defined]
 
@@ -124,6 +135,40 @@ async def upload_file(
             content=raw,
             dest=path,
         )
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/{project_id}/files/rename")
+def rename_file(project_id: str, body: RenameFileBody, request: Request) -> dict:
+    store = _store(request)
+    try:
+        result = store.rename_file(project_id, body.from_path, body.to_path)
+        return {"ok": True, **result}
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/{project_id}/files/delete")
+def delete_files_batch(
+    project_id: str, body: DeleteFilesBody, request: Request
+) -> dict:
+    """Delete one or more files (batch). Prefer this for multi-select delete."""
+    store = _store(request)
+    try:
+        # ensure project exists
+        store.get(project_id)
+        return store.delete_files(project_id, body.paths)
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.delete("/{project_id}/files/{file_path:path}")
+def delete_file(project_id: str, file_path: str, request: Request) -> dict:
+    store = _store(request)
+    try:
+        store.delete_file(project_id, file_path)
+        return {"ok": True, "path": file_path}
     except ProjectError as exc:
         raise _http(exc) from exc
 

@@ -217,6 +217,49 @@ class ProjectStore:
             path.write_bytes(content)
         return path
 
+    def delete_file(self, project_id: str, relative: str) -> None:
+        """Delete a single file (not directories) under the project root."""
+        path = self.resolve_file(project_id, relative)
+        if path.is_dir():
+            raise ProjectError(
+                f"path is a directory (delete files only): {relative}",
+                code="is_directory",
+            )
+        if not path.is_file():
+            raise ProjectError(f"file not found: {relative}", code="file_not_found")
+        # Never delete internal meta via API path that resolves into .prism is ok if user has it;
+        # block deleting the project root itself
+        project_dir = self._project_dir(project_id)
+        if path.resolve() == project_dir.resolve():
+            raise ProjectError("cannot delete project root", code="invalid_path")
+        path.unlink()
+
+    def delete_files(self, project_id: str, paths: list[str]) -> dict[str, Any]:
+        """Delete multiple files; continues on missing after first resolve errors per path."""
+        deleted: list[str] = []
+        errors: list[dict[str, str]] = []
+        for rel in paths:
+            try:
+                self.delete_file(project_id, rel)
+                deleted.append(rel)
+            except ProjectError as exc:
+                errors.append({"path": rel, "code": exc.code, "message": exc.message})
+        return {"deleted": deleted, "errors": errors, "ok": len(errors) == 0}
+
+    def rename_file(
+        self, project_id: str, from_path: str, to_path: str
+    ) -> dict[str, str]:
+        """Rename or move a file within the project (sandbox both paths)."""
+        src = self.resolve_file(project_id, from_path)
+        if not src.is_file():
+            raise ProjectError(f"file not found: {from_path}", code="file_not_found")
+        dest = self.resolve_file(project_id, to_path)
+        if dest.exists():
+            raise ProjectError(f"destination exists: {to_path}", code="exists")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dest)
+        return {"from": from_path, "to": to_path}
+
     def list_files(self, project_id: str) -> list[str]:
         project_dir = self._project_dir(project_id)
         if not project_dir.is_dir():
