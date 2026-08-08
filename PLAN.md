@@ -1,32 +1,33 @@
 # Prism Reverse-Engineer — Implementation Plan
 
-> **Status:** Approved for Phase 0 implementation · living at `C:\Code\prism\PLAN.md`  
-> **Saved:** 2026-08-07 · copied from session plan during Phase 0 scaffold
+> **Status:** Phases **0–8 complete** on https://github.com/nvmaditya/OpenPrism · **Next: Phase 9** (outline, import polish, stubs)  
+> **Living plan:** `C:\Code\prism\PLAN.md` (source of truth for phase map)  
+> **Updated:** 2026-08-07 · Phase 8 redefined as end-user Prism UX + abstraction; old Phase 9 ship split into Phase 9 + Phase 10
 
-> **For agentic workers:** After approval, implement phase-by-phase using skills-guide loop (`Think → Plan → Implement → Verify → Review → Next`). Prefer `subagent-driven-development` or `executing-plans` per phase. Hard rules use TDD. Keep `AGENTS.md` current every phase.
+> **For agentic workers:** Implement phase-by-phase using skills-guide loop (`Think → Plan → Implement → Verify → Review → Next`). Prefer `subagent-driven-development` or `executing-plans` per phase. Hard rules use TDD. Push 100% tested features to OpenPrism; do not drive-by rewrite docs “for the push.”
 
 **Goal:** Reverse-engineer **OpenAI Prism** (`https://prism.openai.com`) as a local full-stack app at `C:\Code\prism`: **LangGraph agent + FastAPI + Next.js**, matching the observed product flow and the agent/tools/skills docs in `Downloads/LaTEX`.
 
-**Architecture:** Single-user local monorepo with **many projects** on disk. FastAPI owns project FS, TeX compile, skill registry, LangGraph agent. Next.js mirrors Prism’s two surfaces: **project dashboard** and **IDE** (files/outline | Monaco editor + floating “Ask anything” | Compiled PDF / Logs / metadata). Skills are progressive `SKILL.md` packages; LLM is **provider-pluggable** from day one.
+**Architecture:** Single-user local monorepo with **many projects** on disk. FastAPI owns project FS, TeX compile, skill registry, LangGraph agent, SSE chat. Next.js is an **end-user presentation layer** over those APIs: **Your Projects** dashboard + project **IDE** (Files, editor, floating Ask anything, Compiled preview first, Logs). API DTOs (ids, log_id, SSE events) stay off primary chrome. Skills are progressive `SKILL.md` packages; LLM is **provider-pluggable** (default **Groq** via `GROQ_API_KEY`).
 
 **Tech stack:**
 - Backend: Python 3.12+, FastAPI, Uvicorn, LangChain, LangGraph, pydantic-settings
-- Frontend: Next.js (App Router), TypeScript, Monaco, PDF viewer, Tailwind (structure first, taste later)
-- Runtime: TeX Live / MiKTeX on host; optional images API for `imagegen`
+- Frontend: Next.js (App Router), TypeScript, Tailwind (product chrome first; Monaco optional later)
+- Runtime: TeX Live / MiKTeX on host; Groq/OpenAI-compatible chat; optional images API for `imagegen`
 - **Sources of truth:**
-  - UI/flow: `C:\Users\chhav\Downloads\LaTEX\PrismFlow\*.png`
-  - Agent rules: `C:\Users\chhav\Downloads\LaTEX\agents.md`
-  - Skills: `C:\Users\chhav\Downloads\LaTEX\skills.md`
-  - Tools: `C:\Users\chhav\Downloads\LaTEX\tools.md`
-  - Build process: [skills-guide](https://github.com/nvmaditya/skills-guide) (`HOW_TO_WORK.md` + `SKILLS_GUIDE.md`)
+  - UI/flow: `C:\Users\chhav\Downloads\LaTEX\PrismFlow\*.png` + product screenshots
+  - Agent rules: root `AGENTS.md` (from LaTEX agents)
+  - Skills/tools: backend catalog + LaTEX skills/tools notes
+  - Build process: [skills-guide](https://github.com/nvmaditya/skills-guide)
 
 **Locked decisions:**
 | Decision | Choice |
 |----------|--------|
-| Location | `C:\Code\prism` monorepo |
+| Location | `C:\Code\prism` monorepo → GitHub `nvmaditya/OpenPrism` |
 | Skill surface | **Full original** (imagegen, openai-docs, plugin-creator, skill-creator, skill-installer) |
-| LLM | Provider-pluggable from day one |
-| Auth | Single-user local first (Invite/Shared UI stubbed, not multi-tenant) |
+| LLM | Provider-pluggable; default **groq** + `GROQ_API_KEY` |
+| Auth | Single-user local first (Invite/Shared stubbed) |
+| Frontend Phase 8 | **End-user abstraction**, not a developer “verify console” |
 
 ---
 
@@ -325,7 +326,7 @@ Visual: dark theme default to match Prism; polish later with taste skill if desi
 
 ## 5. Phases (detailed)
 
-### Phase 0 — Scaffold + living docs
+### Phase 0 — Scaffold + living docs ✅
 
 **Do:**
 1. Create `C:\Code\prism`, git init  
@@ -340,7 +341,7 @@ Visual: dark theme default to match Prism; polish later with taste skill if desi
 
 ---
 
-### Phase 1 — Projects domain
+### Phase 1 — Projects domain ✅
 
 **Do:** create/list/delete blank + example project; import zip; disk layout under `data/projects`.  
 
@@ -350,7 +351,7 @@ Visual: dark theme default to match Prism; polish later with taste skill if desi
 
 ---
 
-### Phase 2 — Sandbox FS + file API
+### Phase 2 — Sandbox FS + file API ✅
 
 **Do:** tree, read, write, upload; path sandbox.  
 
@@ -362,7 +363,7 @@ Visual: dark theme default to match Prism; polish later with taste skill if desi
 
 ---
 
-### Phase 3 — Providers + LangGraph skeleton
+### Phase 3 — Providers + LangGraph skeleton ✅
 
 **Do:** `get_chat_model`; graph with FS tools bound to `project_id`; mock tests.  
 
@@ -370,7 +371,7 @@ Visual: dark theme default to match Prism; polish later with taste skill if desi
 
 ---
 
-### Phase 4 — TeX tools + log capture
+### Phase 4 — TeX tools + log capture ✅
 
 **Do:** wrap full tools.md allowlist; `compile.engine`; store logs.  
 
@@ -380,7 +381,7 @@ Visual: dark theme default to match Prism; polish later with taste skill if desi
 
 ---
 
-### Phase 5 — Compiled PDF pipeline
+### Phase 5 — Compiled PDF pipeline ✅
 
 **Do:** PDF endpoint; optional page previews under preview root; enforce no workspace pollution.  
 
@@ -388,7 +389,7 @@ Visual: dark theme default to match Prism; polish later with taste skill if desi
 
 ---
 
-### Phase 6 — Skills (full surface)
+### Phase 6 — Skills (full surface) ✅
 
 **Do:** registry, load_skill, five catalog packages from skills.md; installer → skill-home; creator/plugin scaffolds; imagegen + openai-docs tools (keys optional, tests skippable).  
 
@@ -398,15 +399,17 @@ Visual: dark theme default to match Prism; polish later with taste skill if desi
 
 ---
 
-### Phase 7 — Streaming chat API
+### Phase 7 — Streaming chat API ✅
 
 **Do:** `POST .../chat` SSE with full event set; wire compile_finished after agent compile tool.  
 
 **Exit:** automated SSE client test.
 
+**Shipped:** `POST /api/projects/{id}/chat` · token / tool / file_changed / done · scripted-model tests.
+
 ---
 
-### Phase 8 — End-user Prism UX + presentation abstraction
+### Phase 8 — End-user Prism UX + presentation abstraction ✅
 
 **Product goal (supersedes interim “verify console” structure UI):**  
 Ship a **Prism-like end-user** dashboard + project editor. Hide developer/debug chrome by default (no API health URL, hex project ids as primary labels, SSE/role dumps, raw `success=` compile telemetry, or skills-catalog dump on the main dashboard).
@@ -418,9 +421,13 @@ Ship a **Prism-like end-user** dashboard + project editor. Hide developer/debug 
 
 **Exit:** banned debug strings absent from primary chrome; create/edit/save/compile/chat still hit backend; journeys J1–J3 + J5 usable without developer literacy.
 
+**Shipped:** `frontend/app/page.tsx` + `frontend/app/project/[id]/page.tsx` · presentation layer over existing APIs · PLAN phase map 8→10.
+
 ---
 
-### Phase 9 — Outline, import polish, stubs
+### Phase 9 — Outline, import polish, stubs (next)
+
+**Status:** pending  
 
 **Do:**
 - Document outline jump (LaTeX sections → editor line)  
@@ -433,6 +440,8 @@ Ship a **Prism-like end-user** dashboard + project editor. Hide developer/debug 
 ---
 
 ### Phase 10 — Harden and ship
+
+**Status:** pending  
 
 **Do:**
 - Guardrail tests (pip, path lint, preview root)  
@@ -471,6 +480,8 @@ Ship a **Prism-like end-user** dashboard + project editor. Hide developer/debug 
 | Provider-pluggable LLM | Yes | User lock |
 | Full skill surface in v1 | Yes | User lock |
 | skills-guide for *build* process | Yes | Phase skill table; not product skills |
+| Phase 8 = end-user abstraction (not verify console) | Yes | Hide API/SSE/log-id chrome; Prism-like product UI |
+| LLM default Groq | Yes | `GROQ_API_KEY` in monorepo `.env` |
 
 ---
 
@@ -536,40 +547,68 @@ Each PR that changes agent surface updates **`AGENTS.md` changelog**.
 
 ## Deviations
 
-- Used uv-managed CPython 3.12 + project .venv because host only had Windows Store python stubs.
-- Next.js from create-next-app 15.1; bumped 
-ext package; Phase 0 page is a dark dashboard shell (not full IDE).
+- Used uv-managed CPython 3.12 + project `.venv` because host only had Windows Store python stubs.
+- Next.js from create-next-app; interim Phase 8 “verify console” UI was replaced by end-user Prism abstraction (same phase number, redefined product goal).
+- Phase map extended: former single “ship” Phase 9 split into **Phase 9** (outline/import/stubs) + **Phase 10** (harden/ship).
+- Default LLM provider set to **Groq** (`GROQ_API_KEY`) for local chat.
 
-## Phase 0 status
+## Phase status summary
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 0 | Scaffold + living docs | ✅ done |
+| 1 | Projects domain | ✅ done |
+| 2 | Sandbox FS + file API | ✅ done |
+| 3 | Providers + LangGraph | ✅ done |
+| 4 | TeX tools + logs | ✅ done |
+| 5 | PDF serve + previews | ✅ done |
+| 6 | Skills full surface | ✅ done |
+| 7 | SSE streaming chat | ✅ done |
+| 8 | End-user Prism UX + abstraction | ✅ done |
+| 9 | Outline, import polish, stubs | ⏳ next |
+| 10 | Harden and ship | ⏳ pending |
+
+### Phase 0 status
 
 - [x] Scaffold complete at `C:\Code\prism` (backend /health, frontend shell, AGENTS.md, PLAN.md, .env.example).
 
-## Phase 1 status
+### Phase 1 status
 
 - [x] Projects domain: create/list/delete blank+example, zip import, zip-slip rejection, isolation tests; pushed to OpenPrism.
 
-
-## Phase 2 status
+### Phase 2 status
 
 - [x] Sandbox FS: structured tree, upload, path escape tests; pushed to OpenPrism.
 
-
-## Phase 3 status
+### Phase 3 status
 
 - [x] Provider factory + LangGraph FS agent skeleton; mock tests; pushed to OpenPrism.
 
-
-## Phase 4 status
+### Phase 4 status
 
 - [x] TeX allowlist runner + compile logs; pushed to OpenPrism.
 
-
-## Phase 5 status
+### Phase 5 status
 
 - [x] PDF serve + preview root isolation; pushed to OpenPrism.
 
-
-## Phase 6 status
+### Phase 6 status
 
 - [x] Skills catalog + install/create/plugin scaffold; pushed to OpenPrism.
+
+### Phase 7 status
+
+- [x] SSE chat stream (`POST /api/projects/{id}/chat`); token/tool/file_changed/done; scripted-model tests; pushed to OpenPrism.
+
+### Phase 8 status
+
+- [x] End-user dashboard (**Your Projects**, Blank/Example) + IDE (Files, editor, Ask anything, Compiled/Logs) without primary debug chrome; PLAN map 8→10; pushed to OpenPrism.
+
+### Phase 9 status
+
+- [ ] Outline jump, import UX, Versions/Comments/Project Info stubs.
+
+### Phase 10 status
+
+- [ ] Harden, Playwright optional, ship checklist.
 
