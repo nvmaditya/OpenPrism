@@ -3,6 +3,16 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
+  FileText,
+  FolderOpen,
+  Plus,
+  Trash2,
+  Hexagon,
+  Users,
+  FilePlus2,
+  BookOpen,
+} from "lucide-react";
+import {
   Project,
   createProject,
   deleteProject,
@@ -79,16 +89,18 @@ export default function DashboardPage() {
     <div className="min-h-screen flex bg-zinc-950 text-zinc-100">
       <aside className="w-52 shrink-0 border-r border-zinc-800/80 flex flex-col py-4">
         <div className="px-4 mb-6 flex items-center gap-2">
-          <div className="h-7 w-7 rounded-full bg-zinc-100 text-zinc-900 flex items-center justify-center text-xs font-bold">
-            P
+          <div className="h-7 w-7 rounded-full bg-zinc-100 text-zinc-900 flex items-center justify-center">
+            <Hexagon className="h-4 w-4" strokeWidth={2.25} aria-hidden />
           </div>
           <span className="font-semibold tracking-tight">Prism</span>
         </div>
         <nav className="px-2 space-y-0.5 text-sm">
-          <div className="rounded-md bg-zinc-800/80 px-3 py-2 text-zinc-100">
+          <div className="rounded-md bg-zinc-800/80 px-3 py-2 text-zinc-100 flex items-center gap-2">
+            <FolderOpen className="h-4 w-4 shrink-0" aria-hidden />
             Your Projects
           </div>
-          <div className="rounded-md px-3 py-2 text-zinc-500 cursor-default">
+          <div className="rounded-md px-3 py-2 text-zinc-500 cursor-default flex items-center gap-2">
+            <Users className="h-4 w-4 shrink-0" aria-hidden />
             Shared with you
           </div>
         </nav>
@@ -103,24 +115,27 @@ export default function DashboardPage() {
               type="button"
               disabled={busy}
               onClick={() => setMenuOpen((v) => !v)}
-              className="rounded-full bg-zinc-100 text-zinc-900 text-sm font-medium px-4 py-2 hover:bg-white disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 text-zinc-900 text-sm font-medium px-4 py-2 hover:bg-white disabled:opacity-50"
             >
-              + New
+              <Plus className="h-4 w-4" aria-hidden />
+              New
             </button>
             {menuOpen && (
-              <div className="absolute right-0 mt-2 w-44 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl py-1 z-20">
+              <div className="absolute right-0 mt-2 w-48 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl py-1 z-20">
                 <button
                   type="button"
-                  className="block w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
+                  className="flex w-full items-center gap-2 text-left px-3 py-2 text-sm hover:bg-zinc-800"
                   onClick={() => void onCreate("blank")}
                 >
+                  <FilePlus2 className="h-4 w-4 text-zinc-400" aria-hidden />
                   Blank project
                 </button>
                 <button
                   type="button"
-                  className="block w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
+                  className="flex w-full items-center gap-2 text-left px-3 py-2 text-sm hover:bg-zinc-800"
                   onClick={() => void onCreate("example")}
                 >
+                  <BookOpen className="h-4 w-4 text-zinc-400" aria-hidden />
                   Example project
                 </button>
               </div>
@@ -150,8 +165,8 @@ export default function DashboardPage() {
                   href={`/project/${p.id}`}
                   className="flex items-center gap-3 min-w-0 group"
                 >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-zinc-400 text-lg">
-                    📄
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-zinc-400">
+                    <FileText className="h-4 w-4" aria-hidden />
                   </span>
                   <span className="truncate font-medium text-zinc-100 group-hover:text-white">
                     {p.name}
@@ -163,9 +178,11 @@ export default function DashboardPage() {
                 <div className="text-right">
                   <button
                     type="button"
-                    className="text-xs text-zinc-500 hover:text-red-400"
+                    className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-red-400"
                     onClick={() => void onDelete(p.id, p.name)}
+                    aria-label={`Delete ${p.name}`}
                   >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
                     Delete
                   </button>
                 </div>
@@ -173,13 +190,15 @@ export default function DashboardPage() {
             ))}
             {!projects.length && !error && (
               <div className="px-4 py-16 text-center text-zinc-500 text-sm">
+                <FileText className="h-10 w-10 mx-auto mb-3 text-zinc-700" aria-hidden />
                 <p className="mb-3">No projects yet.</p>
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => void onCreate("blank")}
-                  className="text-sky-400 hover:underline"
+                  className="inline-flex items-center gap-1.5 text-sky-400 hover:underline"
                 >
+                  <Plus className="h-4 w-4" aria-hidden />
                   Create a blank project
                 </button>
               </div>

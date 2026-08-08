@@ -4,6 +4,23 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
+  ArrowLeft,
+  ArrowUp,
+  CheckCircle2,
+  AlertCircle,
+  CircleDashed,
+  ExternalLink,
+  FileCode2,
+  FileText,
+  Folder,
+  Loader2,
+  MessageSquare,
+  Play,
+  Save,
+  ScrollText,
+  Upload,
+} from "lucide-react";
+import {
   TreeNode,
   compileProject,
   getTree,
@@ -18,6 +35,13 @@ import {
 
 type ChatLine = { role: "user" | "assistant"; text: string };
 
+function fileIcon(name: string) {
+  if (name.endsWith(".tex") || name.endsWith(".bib") || name.endsWith(".sty")) {
+    return FileCode2;
+  }
+  return FileText;
+}
+
 function TreeView({
   node,
   depth,
@@ -31,25 +55,31 @@ function TreeView({
 }) {
   const pad = { paddingLeft: 10 + depth * 12 };
   if (node.type === "file") {
+    const Icon = fileIcon(node.name);
     return (
       <button
         type="button"
         style={pad}
         onClick={() => onOpen(node.path)}
-        className={`block w-full text-left py-1 text-sm truncate rounded-sm ${
+        className={`flex w-full items-center gap-1.5 text-left py-1 text-sm truncate rounded-sm ${
           active === node.path
             ? "bg-zinc-800 text-zinc-50"
             : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
         }`}
       >
-        {node.name}
+        <Icon className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+        <span className="truncate">{node.name}</span>
       </button>
     );
   }
   return (
     <div>
       {node.path !== "" && (
-        <div style={pad} className="py-1 text-xs text-zinc-500 font-medium">
+        <div
+          style={pad}
+          className="flex items-center gap-1.5 py-1 text-xs text-zinc-500 font-medium"
+        >
+          <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
           {node.name}
         </div>
       )}
@@ -270,19 +300,30 @@ export default function ProjectIdePage() {
           ? "Needs attention"
           : "Not compiled yet";
 
+  const StatusIcon =
+    compileStatus === "running"
+      ? Loader2
+      : compileStatus === "ok"
+        ? CheckCircle2
+        : compileStatus === "failed"
+          ? AlertCircle
+          : CircleDashed;
+
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-zinc-950 text-zinc-100">
       <header className="border-b border-zinc-800 px-3 py-2 flex items-center gap-3 shrink-0">
         <Link
           href="/"
-          className="text-zinc-500 hover:text-zinc-300 text-sm"
+          className="inline-flex items-center justify-center h-8 w-8 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900"
           title="All projects"
         >
-          ←
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          <span className="sr-only">All projects</span>
         </Link>
         <span className="font-medium truncate max-w-[200px]">{projectName}</span>
         <div className="ml-auto flex items-center gap-2">
-          <label className="text-xs text-zinc-400 border border-zinc-700 rounded-md px-2.5 py-1.5 cursor-pointer hover:bg-zinc-900">
+          <label className="inline-flex items-center gap-1.5 text-xs text-zinc-400 border border-zinc-700 rounded-md px-2.5 py-1.5 cursor-pointer hover:bg-zinc-900">
+            <Upload className="h-3.5 w-3.5" aria-hidden />
             Add file
             <input
               type="file"
@@ -294,16 +335,22 @@ export default function ProjectIdePage() {
             type="button"
             onClick={() => void onCompile()}
             disabled={compileStatus === "running"}
-            className="text-xs rounded-md bg-zinc-100 text-zinc-900 px-3 py-1.5 font-medium hover:bg-white disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 text-xs rounded-md bg-zinc-100 text-zinc-900 px-3 py-1.5 font-medium hover:bg-white disabled:opacity-50"
           >
+            {compileStatus === "running" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Play className="h-3.5 w-3.5" aria-hidden />
+            )}
             {compileStatus === "running" ? "Compiling…" : "Compile"}
           </button>
           <button
             type="button"
             disabled={!dirty}
             onClick={() => void save()}
-            className="text-xs rounded-md border border-zinc-600 px-3 py-1.5 disabled:opacity-40 hover:bg-zinc-900"
+            className="inline-flex items-center gap-1.5 text-xs rounded-md border border-zinc-600 px-3 py-1.5 disabled:opacity-40 hover:bg-zinc-900"
           >
+            <Save className="h-3.5 w-3.5" aria-hidden />
             Save
           </button>
         </div>
@@ -322,23 +369,25 @@ export default function ProjectIdePage() {
             <button
               type="button"
               onClick={() => setLeftTab("files")}
-              className={`flex-1 py-2 ${
+              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2 ${
                 leftTab === "files"
                   ? "text-zinc-100 border-b border-zinc-100"
                   : "text-zinc-500"
               }`}
             >
+              <Folder className="h-3.5 w-3.5" aria-hidden />
               Files
             </button>
             <button
               type="button"
               onClick={() => setLeftTab("chats")}
-              className={`flex-1 py-2 ${
+              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2 ${
                 leftTab === "chats"
                   ? "text-zinc-100 border-b border-zinc-100"
                   : "text-zinc-500"
               }`}
             >
+              <MessageSquare className="h-3.5 w-3.5" aria-hidden />
               Chats
             </button>
           </div>
@@ -376,6 +425,7 @@ export default function ProjectIdePage() {
         {/* Center: editor + ask anything */}
         <section className="flex-1 flex flex-col min-w-0 min-h-0 relative">
           <div className="px-3 py-1.5 text-xs text-zinc-500 border-b border-zinc-800 flex items-center gap-2">
+            <FileCode2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="font-medium text-zinc-300">
               {openPath?.split("/").pop() || "Untitled"}
             </span>
@@ -427,10 +477,14 @@ export default function ProjectIdePage() {
                 type="button"
                 disabled={chatBusy || !chatInput.trim()}
                 onClick={() => void onChat()}
-                className="rounded-full bg-zinc-100 text-zinc-900 h-8 w-8 flex items-center justify-center text-sm font-semibold disabled:opacity-40"
+                className="rounded-full bg-zinc-100 text-zinc-900 h-8 w-8 flex items-center justify-center disabled:opacity-40"
                 aria-label="Send"
               >
-                ↑
+                {chatBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <ArrowUp className="h-4 w-4" aria-hidden />
+                )}
               </button>
             </div>
           </div>
@@ -442,36 +496,44 @@ export default function ProjectIdePage() {
             <button
               type="button"
               onClick={() => setRightTab("compiled")}
-              className={`flex-1 py-2.5 ${
+              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 ${
                 rightTab === "compiled"
                   ? "text-zinc-100 border-b-2 border-zinc-100"
                   : "text-zinc-500"
               }`}
             >
+              <FileText className="h-3.5 w-3.5" aria-hidden />
               Compiled
             </button>
             <button
               type="button"
               onClick={() => setRightTab("logs")}
-              className={`flex-1 py-2.5 ${
+              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 ${
                 rightTab === "logs"
                   ? "text-zinc-100 border-b-2 border-zinc-100"
                   : "text-zinc-500"
               }`}
             >
+              <ScrollText className="h-3.5 w-3.5" aria-hidden />
               Logs
             </button>
           </div>
           <div className="px-3 py-1.5 text-xs text-zinc-500 border-b border-zinc-800 flex items-center justify-between">
             <span
-              className={
+              className={`inline-flex items-center gap-1.5 ${
                 compileStatus === "ok"
                   ? "text-emerald-400"
                   : compileStatus === "failed"
                     ? "text-amber-400"
                     : "text-zinc-500"
-              }
+              }`}
             >
+              <StatusIcon
+                className={`h-3.5 w-3.5 ${
+                  compileStatus === "running" ? "animate-spin" : ""
+                }`}
+                aria-hidden
+              />
               {statusLabel}
             </span>
             {pdfAvailable && (
@@ -479,9 +541,10 @@ export default function ProjectIdePage() {
                 href={pdfUrl(projectId, "main.pdf")}
                 target="_blank"
                 rel="noreferrer"
-                className="text-sky-400 hover:underline"
+                className="inline-flex items-center gap-1 text-sky-400 hover:underline"
               >
                 Open PDF
+                <ExternalLink className="h-3 w-3" aria-hidden />
               </a>
             )}
           </div>
