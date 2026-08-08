@@ -163,45 +163,76 @@ export async function listSkills(): Promise<
 
 export type ChatEvent = { event: string; data: Record<string, unknown> };
 
+export type ChatContext = {
+  open_path?: string | null;
+  open_content?: string | null;
+};
+
 export async function streamChat(
   projectId: string,
   message: string,
   onEvent: (ev: ChatEvent) => void,
   signal?: AbortSignal,
+  context?: ChatContext,
 ): Promise<void> {
   const res = await fetch(apiUrl(`/api/projects/${projectId}/chat`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({
+      message,
+      context: context
+        ? {
+            open_path: context.open_path || undefined,
+            open_content: context.open_content
+              ? context.open_content.slice(0, 6000)
+              : undefined,
+          }
+        : undefined,
+    }),
     signal,
   });
   if (!res.ok || !res.body) {
-    throw new Error(`chat failed: ${res.status}`);
+    const errText = await res.text().catch(() => "");
+    throw new Error(`chat failed: ${res.status} ${errText.slice(0, 200)}`);
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
   let eventName = "message";
+  let dataLines: string[] = [];
+
+  const flush = () => {
+    if (!dataLines.length) return;
+    const raw = dataLines.join("\n").trim();
+    dataLines = [];
+    try {
+      onEvent({ event: eventName, data: JSON.parse(raw) });
+    } catch {
+      onEvent({ event: eventName, data: { raw } });
+    }
+    eventName = "message";
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
-    const parts = buf.split("\n");
+    const parts = buf.split(/\r?\n/);
     buf = parts.pop() || "";
     for (const line of parts) {
       if (line.startsWith("event:")) {
         eventName = line.slice(6).trim();
       } else if (line.startsWith("data:")) {
-        const raw = line.slice(5).trim();
-        try {
-          onEvent({ event: eventName, data: JSON.parse(raw) });
-        } catch {
-          onEvent({ event: eventName, data: { raw } });
-        }
-        eventName = "message";
+        dataLines.push(line.slice(5).trimStart());
+      } else if (line === "") {
+        flush();
       }
     }
   }
+  if (buf.trim()) {
+    if (buf.startsWith("data:")) dataLines.push(buf.slice(5).trimStart());
+  }
+  flush();
 }
 
 export { API_BASE };

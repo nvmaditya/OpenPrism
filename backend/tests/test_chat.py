@@ -127,7 +127,10 @@ def test_chat_stream_file_write_on_disk(app_client):
     with client.stream(
         "POST",
         f"/api/projects/{pid}/chat",
-        json={"message": "Write chat-out.txt"},
+        json={
+            "message": "Write chat-out.txt",
+            "context": {"open_path": "main.tex", "open_content": "Hello"},
+        },
     ) as resp:
         assert resp.status_code == 200
         body = "".join(resp.iter_text())
@@ -150,6 +153,45 @@ def test_chat_stream_file_write_on_disk(app_client):
     for child in projects_root.iterdir():
         if child.is_dir() and child.name != pid:
             assert not (child / "chat-out.txt").exists()
+
+
+def test_chat_stream_edit_tool_on_disk(app_client):
+    app, client, projects_root = app_client
+    pid = client.post("/api/projects", json={"kind": "blank", "name": "Edit"}).json()[
+        "id"
+    ]
+    # blank main.tex contains "Hello, Prism."
+    app.state.chat_model_override = ScriptedChatModel(
+        script=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "edit_project_file",
+                        "args": {
+                            "path": "main.tex",
+                            "old_str": "Hello, Prism.",
+                            "new_str": "Hello, Edited.",
+                        },
+                        "id": "call_e1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="Updated main.tex"),
+        ]
+    )
+    with client.stream(
+        "POST",
+        f"/api/projects/{pid}/chat",
+        json={"message": "Change the greeting"},
+    ) as resp:
+        assert resp.status_code == 200
+        body = "".join(resp.iter_text())
+    events = _parse_sse(body)
+    assert any(e["event"] == "file_changed" for e in events)
+    text = (projects_root / pid / "main.tex").read_text(encoding="utf-8")
+    assert "Hello, Edited." in text
 
 
 def test_chat_missing_project_404(app_client):

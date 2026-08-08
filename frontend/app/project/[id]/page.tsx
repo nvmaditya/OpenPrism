@@ -180,32 +180,80 @@ export default function ProjectIdePage() {
     setChatInput("");
     setChatLines((lines) => [...lines, { role: "user", text: msg }]);
     let assistant = "";
+    let sawTool = false;
+    let lastChanged: string | null = null;
     try {
-      await streamChat(projectId, msg, (ev) => {
-        if (ev.event === "token") {
-          assistant += String(ev.data.text || "");
-          setChatLines((lines) => {
-            const copy = [...lines];
-            const last = copy[copy.length - 1];
-            if (last?.role === "assistant") {
-              copy[copy.length - 1] = { role: "assistant", text: assistant };
-            } else {
-              copy.push({ role: "assistant", text: assistant });
+      await streamChat(
+        projectId,
+        msg,
+        (ev) => {
+          if (ev.event === "token") {
+            assistant += String(ev.data.text || "");
+            setChatLines((lines) => {
+              const copy = [...lines];
+              const last = copy[copy.length - 1];
+              if (last?.role === "assistant") {
+                copy[copy.length - 1] = { role: "assistant", text: assistant };
+              } else {
+                copy.push({ role: "assistant", text: assistant });
+              }
+              return copy;
+            });
+          }
+          if (ev.event === "tool_start") {
+            sawTool = true;
+            const name = String(ev.data.name || "tool");
+            setChatLines((lines) => {
+              // light status without exposing SSE jargon
+              const note = `Working… (${name.replace(/_/g, " ")})`;
+              const copy = [...lines];
+              const last = copy[copy.length - 1];
+              if (last?.role === "assistant" && last.text.startsWith("Working")) {
+                copy[copy.length - 1] = { role: "assistant", text: note };
+              } else if (!assistant) {
+                copy.push({ role: "assistant", text: note });
+              }
+              return copy;
+            });
+          }
+          if (ev.event === "file_changed") {
+            const p = String(ev.data.path || "");
+            lastChanged = p || lastChanged;
+            void refreshTree().then(() => {
+              if (p) void openFile(p);
+            });
+          }
+          if (ev.event === "tool_end") {
+            const result = String(ev.data.result || "");
+            if (result.startsWith("ERROR")) {
+              setError(result.slice(0, 240));
             }
-            return copy;
-          });
-        }
-        if (ev.event === "file_changed") {
-          const p = String(ev.data.path || "");
-          void refreshTree().then(() => {
-            if (p && openPath === p) void openFile(p);
-            else if (p === "main.tex" || p.endsWith(".tex")) void openFile(p);
-          });
-        }
-        if (ev.event === "error") {
-          setError(String(ev.data.message || "Something went wrong"));
-        }
-      });
+          }
+          if (ev.event === "error") {
+            setError(String(ev.data.message || "Something went wrong"));
+          }
+          if (ev.event === "done") {
+            void refreshTree().then(() => {
+              if (lastChanged) void openFile(lastChanged);
+              else if (openPath) void openFile(openPath);
+            });
+          }
+        },
+        undefined,
+        {
+          open_path: openPath,
+          open_content: content,
+        },
+      );
+      if (!assistant && !sawTool) {
+        setChatLines((lines) => [
+          ...lines,
+          {
+            role: "assistant",
+            text: "I could not apply file changes. Try: “Create notes.tex with a short article” or “Add a section titled Methods to main.tex”.",
+          },
+        ]);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

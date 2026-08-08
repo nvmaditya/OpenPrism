@@ -187,6 +187,24 @@ def test_agent_write_then_read_with_scripted_model(store: ProjectStore, projects
     assert secret in text or "Done" in text
 
 
+def test_edit_project_file_tool(store: ProjectStore, projects_root: Path):
+    from app.agent.tools_fs import make_fs_tools
+
+    project = store.create(kind="blank", name="EditTool")
+    tools = {t.name: t for t in make_fs_tools(store, project.id)}
+    edit = tools["edit_project_file"]
+    result = edit.invoke(
+        {
+            "path": "main.tex",
+            "old_str": "Hello, Prism.",
+            "new_str": "Hello, Tools.",
+        }
+    )
+    assert "OK edited" in result
+    text = (projects_root / project.id / "main.tex").read_text(encoding="utf-8")
+    assert "Hello, Tools." in text
+
+
 def test_agent_tool_respects_path_escape(store: ProjectStore, projects_root: Path):
     project = store.create(kind="blank", name="Escape")
     pid = project.id

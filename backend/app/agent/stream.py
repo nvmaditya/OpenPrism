@@ -10,11 +10,13 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
-from app.agent.graph import DEFAULT_SYSTEM, build_agent
+from app.agent.graph import build_agent
 from app.domain.project import ProjectStore
 from app.settings import Settings
 
-_WRITE_OK = re.compile(r"OK wrote (?P<path>\S+)")
+_WRITE_OK = re.compile(
+    r"OK (?:wrote|edited) (?P<path>\S+)"
+)
 
 
 def sse_frame(event: str, data: dict[str, Any]) -> str:
@@ -38,15 +40,13 @@ def _events_from_message(msg: BaseMessage) -> list[tuple[str, dict[str, Any]]]:
                     {"name": name, "args": args or {}, "id": tc_id},
                 )
             )
-            if name == "write_project_file" and isinstance(args, dict):
+            if name in ("write_project_file", "edit_project_file") and isinstance(
+                args, dict
+            ):
                 path = args.get("path")
                 if path:
-                    out.append(
-                        (
-                            "file_changed",
-                            {"path": path, "op": "write"},
-                        )
-                    )
+                    op = "edit" if name == "edit_project_file" else "write"
+                    out.append(("file_changed", {"path": path, "op": op}))
         content = getattr(msg, "content", None) or ""
         if isinstance(content, list):
             # content blocks
@@ -113,7 +113,9 @@ def iter_agent_events(
     *,
     model: BaseChatModel | None = None,
     settings: Settings | None = None,
-    system_prompt: str = DEFAULT_SYSTEM,
+    system_prompt: str | None = None,
+    open_path: str | None = None,
+    open_preview: str | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """
     Run the project agent and yield (event_name, data) pairs.
@@ -129,6 +131,8 @@ def iter_agent_events(
         model=model,
         settings=settings,
         system_prompt=system_prompt,
+        open_path=open_path,
+        open_preview=open_preview,
     )
 
     seen_file_paths: set[str] = set()
@@ -160,6 +164,8 @@ def iter_sse_bytes(
     *,
     model: BaseChatModel | None = None,
     settings: Settings | None = None,
+    open_path: str | None = None,
+    open_preview: str | None = None,
 ) -> Iterator[bytes]:
     """Yield UTF-8 SSE frames for StreamingResponse."""
     for event, data in iter_agent_events(
@@ -168,5 +174,7 @@ def iter_sse_bytes(
         user_message,
         model=model,
         settings=settings,
+        open_path=open_path,
+        open_preview=open_preview,
     ):
         yield sse_frame(event, data).encode("utf-8")

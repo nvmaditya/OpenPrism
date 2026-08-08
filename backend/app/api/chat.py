@@ -15,8 +15,19 @@ from app.settings import Settings
 router = APIRouter(prefix="/api/projects", tags=["chat"])
 
 
+class ChatContext(BaseModel):
+    """Optional editor context so the agent knows what the user is looking at."""
+
+    open_path: str | None = None
+    open_content: str | None = Field(
+        default=None,
+        description="Current editor buffer (may be truncated by client)",
+    )
+
+
 class ChatBody(BaseModel):
     message: str = Field(min_length=1, description="User message for the agent")
+    context: ChatContext | None = None
 
 
 def _store(request: Request) -> ProjectStore:
@@ -59,6 +70,10 @@ def chat_stream(
 
     model = _model_override(request)
     settings = _settings(request)
+    open_path = body.context.open_path if body.context else None
+    open_preview = body.context.open_content if body.context else None
+    if open_preview and len(open_preview) > 6000:
+        open_preview = open_preview[:6000]
 
     def generate():
         yield from iter_sse_bytes(
@@ -67,6 +82,8 @@ def chat_stream(
             body.message,
             model=model,
             settings=settings,
+            open_path=open_path,
+            open_preview=open_preview,
         )
 
     return StreamingResponse(
