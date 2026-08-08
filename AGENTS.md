@@ -11,10 +11,20 @@ You are working inside the Prism app that helps researchers write and edit files
 
 - **Canonical remote:** [https://github.com/nvmaditya/OpenPrism](https://github.com/nvmaditya/OpenPrism) (`origin` / `main`).
 - **You must push every 100% tested feature** to that repo. Do not leave a completed, fully tested feature only on the local machine.
-- Definition of “100% tested” for a feature slice: automated tests (or documented smoke checks for UI) pass for that slice’s acceptance criteria, and the change is committed with a clear message.
-- After tests pass: `git push -u origin main` (or push the feature branch + open PR, then merge to `main` if not on main). Confirm the remote has the commit before claiming the feature is done.
-- Do **not** push half-baked or failing work; fix tests first, then push.
-- **Do not update docs during the push.** Feature commits should not mix in drive-by `AGENTS.md` / `PLAN.md` / README rewrites “for the push.” Only change docs when the user asked for documentation, or when the feature *requires* a shipping-rule update. Prefer code + tests in the feature commit; leave doc polish for an explicit docs task.
+- Definition of “100% tested”: automated tests (or documented smoke checks) pass for the slice’s acceptance criteria.
+
+### Required sequence after a feature (enforced by Grok project hooks)
+
+1. **Implement** the feature.
+2. **Test** (`pytest` / smoke) until green.
+3. **Update documentation** when the product or agent surface changed (`PLAN.md` phase status; `AGENTS.md` for agent-facing API/tools — not drive-by README fluff).
+4. **Commit** with a clear message.
+5. **`git push origin main`** and confirm the remote has the commit.
+6. Only then claim the feature done / end the turn.
+
+Do **not** push half-baked or failing work. Do **not** finish a turn with a dirty tree or unpushed commits on this repo (Stop hook will block and re-prompt).
+
+Hooks live in `.grok/hooks/` (`feature-ship.json`). Trust the project with `/hooks-trust` so they run.
 
 ## Hard rules
 

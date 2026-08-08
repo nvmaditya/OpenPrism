@@ -19,4 +19,5 @@ data/skill-home/*
 .DS_Store
 
 logs/
+.grok/hooks/state/
 
