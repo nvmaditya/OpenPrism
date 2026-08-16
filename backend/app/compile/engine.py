@@ -202,6 +202,22 @@ class CompileEngine:
             return ["-interaction=nonstopmode", main_file]
         raise ProjectError(f"unsupported engine: {engine}", code="invalid_engine")
 
+    def write_log(
+        self,
+        project_id: str,
+        log_id: str,
+        log_text: str,
+        meta: dict[str, Any],
+    ) -> None:
+        """Persist a log (compile, tool, or agent) under ``.prism/logs``."""
+        if not re.fullmatch(r"[0-9a-f]{32}", log_id):
+            raise ProjectError(f"invalid log id: {log_id}", code="not_found")
+        project_dir = self._project_dir(project_id)
+        payload = dict(meta)
+        payload.setdefault("log_id", log_id)
+        payload.setdefault("project_id", project_id)
+        self._write_log(project_dir, log_id, log_text, payload)
+
     def _write_log(
         self,
         project_dir: Path,

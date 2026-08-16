@@ -81,7 +81,14 @@ Also: `PRISM_LLM_MODEL` (Groq default `llama-3.3-70b-versatile`), `PRISM_LLM_API
 - FS tools (real `ProjectStore` + path sandbox):
   - `read_project_file(path)`
   - `write_project_file(path, content)`
+  - `edit_project_file(path, old_str, new_str)`
   - `list_project_files()`
+  - `add_tex_input(path, content)` — new section file + one `\input` in `main.tex`
+  - `check_latex(path?)` — static braces/environments
+  - `compile_project(main_file?)` — allowlisted TeX compile
+  - `extract_pdf_text(path?)` — `pypdf` text from compiled PDF
+- After every chat turn a **host verify hook** (not the model) runs static + structure + compile + PDF extract. Failure **rolls back** to the pre-turn snapshot. `done` includes `trace_id`, `verified`, `rollback`.
+- Agent traces persist as `.prism/logs/{trace_id}` with `kind: "agent"` (same list/get as compile logs).
 - Inject a chat model for tests (e.g. scripted tool-calling model); production uses `get_chat_model(settings)`.
 - **Streaming chat (Phase 7):** `POST /api/projects/{id}/chat` with `{"message":"..."}` returns SSE (`text/event-stream`). Events: `token`, `tool_start`, `tool_end`, `file_changed`, `error`, `done`. FS writes surface as `file_changed` and land under that project only.
 
@@ -155,4 +162,5 @@ Live imagegen/GitHub install require credentials and are optional; list/load/loc
 - Phase 4: Allowlisted TeX subprocess runner; project compile + retrievable logs (`latexmk`/`pdflatex`/…).
 - Phase 5: PDF serve (`/pdf`) + page previews under isolated `PRISM_PREVIEW_ROOT` (pdftoppm or Pillow fallback).
 - Phase 6: Progressive skills — five catalog packages, list/load/install/create, plugin scaffold; skill-home via `PRISM_SKILL_HOME`.
+- Resume Ask-anything: modular example (`sections/` + `\input`), `add_tex_input`, host verify+rollback, agent `trace_id` on the existing logs surface.
 

@@ -214,6 +214,35 @@ export async function listSkills(): Promise<
   return data.skills;
 }
 
+export type ProjectLog = {
+  log_id: string;
+  kind?: string;
+  success?: boolean;
+  verified?: boolean;
+  rollback?: boolean;
+  created_at?: string;
+  engine?: string;
+  tool?: string;
+};
+
+export async function listLogs(projectId: string): Promise<ProjectLog[]> {
+  const data = await json<{ logs: ProjectLog[] }>(
+    await fetch(apiUrl(`/api/projects/${projectId}/logs`), { cache: "no-store" }),
+  );
+  return data.logs || [];
+}
+
+export async function getLog(
+  projectId: string,
+  logId: string,
+): Promise<ProjectLog & { log?: string }> {
+  return json(
+    await fetch(apiUrl(`/api/projects/${projectId}/logs/${logId}`), {
+      cache: "no-store",
+    }),
+  );
+}
+
 export type ChatEvent = { event: string; data: Record<string, unknown> };
 
 export type ChatContext = {

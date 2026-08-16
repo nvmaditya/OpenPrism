@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agent.stream import iter_sse_bytes
+from app.compile.engine import CompileEngine
 from app.domain.project import ProjectError, ProjectStore
 from app.settings import Settings
 
@@ -70,6 +71,9 @@ def chat_stream(
 
     model = _model_override(request)
     settings = _settings(request)
+    compile_engine = getattr(request.app.state, "compile_engine", None)
+    if compile_engine is None:
+        compile_engine = CompileEngine(store)
     open_path = body.context.open_path if body.context else None
     open_preview = body.context.open_content if body.context else None
     if open_preview and len(open_preview) > 6000:
@@ -84,6 +88,7 @@ def chat_stream(
             settings=settings,
             open_path=open_path,
             open_preview=open_preview,
+            compile_engine=compile_engine,
         )
 
     return StreamingResponse(

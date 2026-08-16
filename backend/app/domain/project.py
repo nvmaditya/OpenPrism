@@ -31,20 +31,37 @@ EXAMPLE_MAIN_TEX = r"""\documentclass[10pt,letterpaper]{article}
 
 \titleformat{\section}
   {\normalfont\large\bfseries}{}{0em}{}[\titlerule]
+\pagestyle{empty}
 
 \begin{document}
-\begin{center}
-  {\LARGE Example Project}\\[0.5em]
-  OpenPrism sample paper
-\end{center}
-
-\section*{Introduction}
-This is the example project seeded by OpenPrism.
-
-\section*{Methods}
-Edit \texttt{main.tex} and compile when the TeX tools land.
+\input{sections/header}
+\input{sections/summary}
+\input{sections/experience}
+\input{sections/education}
+\input{sections/skills}
 \end{document}
 """
+
+EXAMPLE_SECTIONS: dict[str, str] = {
+    "sections/header.tex": r"""\begin{center}
+{\LARGE Ada Lovelace}\\[0.35em]
+{\small mathematician $\cdot$ london $\cdot$ ada@example.com}
+\end{center}
+""",
+    "sections/summary.tex": r"""\section*{Professional Summary}
+Example resume seeded by OpenPrism. Edit files under \texttt{sections/}.
+""",
+    "sections/experience.tex": r"""\section*{Experience}
+\textbf{Analytical Engine} \hfill 1843\\
+Wrote the first algorithm intended for a machine.
+""",
+    "sections/education.tex": r"""\section*{Education}
+\textbf{Private study} --- mathematics and correspondence with Babbage.
+""",
+    "sections/skills.tex": r"""\section*{Skills}
+Mathematics, algorithms, technical writing.
+""",
+}
 
 
 class ProjectError(Exception):
@@ -181,6 +198,10 @@ class ProjectStore:
             (project_dir / "main.tex").write_text(BLANK_MAIN_TEX, encoding="utf-8")
         elif kind == "example":
             (project_dir / "main.tex").write_text(EXAMPLE_MAIN_TEX, encoding="utf-8")
+            for rel, body in EXAMPLE_SECTIONS.items():
+                dest = project_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(body, encoding="utf-8")
 
         return info
 

@@ -22,9 +22,12 @@ import {
 import {
   TreeNode,
   compileProject,
+  getLog,
   getTree,
+  listLogs,
   listProjects,
   pdfUrl,
+  ProjectLog,
   readFile,
   renderPreviews,
   streamChat,
@@ -55,6 +58,20 @@ export default function ProjectIdePage() {
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   const [chatBusy, setChatBusy] = useState(false);
   const [leftTab, setLeftTab] = useState<"files" | "chats">("files");
+  const [logEntries, setLogEntries] = useState<ProjectLog[]>([]);
+  const [openLogId, setOpenLogId] = useState<string | null>(null);
+
+  const refreshLogs = useCallback(async () => {
+    try {
+      const items = await listLogs(projectId);
+      items.sort((a, b) =>
+        String(b.created_at || "").localeCompare(String(a.created_at || "")),
+      );
+      setLogEntries(items);
+    } catch {
+      /* logs endpoint optional on first paint */
+    }
+  }, [projectId]);
 
   const refreshTree = useCallback(async () => {
     const t = await getTree(projectId);
@@ -80,12 +97,20 @@ export default function ProjectIdePage() {
         const p = projects.find((x) => x.id === projectId);
         if (p) setProjectName(p.name);
         await refreshTree();
+        await refreshLogs();
         await openFile("main.tex");
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
-  }, [projectId, refreshTree, openFile]);
+  }, [projectId, refreshTree, refreshLogs, openFile]);
+
+  useEffect(() => {
+    if (!openLogId) return;
+    void getLog(projectId, openLogId)
+      .then((full) => setLog(String(full.log || "")))
+      .catch(() => {});
+  }, [openLogId, projectId]);
 
   async function save() {
     if (!openPath) return;
@@ -123,6 +148,7 @@ export default function ProjectIdePage() {
           setPreviewUrls([]);
         }
       }
+      await refreshLogs();
     } catch (e) {
       setCompileStatus("failed");
       setError(e instanceof Error ? e.message : String(e));
@@ -190,6 +216,30 @@ export default function ProjectIdePage() {
             setError(String(ev.data.message || "Something went wrong"));
           }
           if (ev.event === "done") {
+            const traceId = String(ev.data.trace_id || "");
+            const verified = ev.data.verified;
+            if (traceId) {
+              const note =
+                verified === false
+                  ? `Verification failed. Paste this trace: ${traceId}`
+                  : `Trace ${traceId}`;
+              assistant = assistant ? `${assistant}\n\n${note}` : note;
+              setChatLines((lines) => {
+                const copy = [...lines];
+                const last = copy[copy.length - 1];
+                if (last?.role === "assistant") {
+                  copy[copy.length - 1] = { role: "assistant", text: assistant };
+                } else {
+                  copy.push({ role: "assistant", text: note });
+                }
+                return copy;
+              });
+              setOpenLogId(traceId);
+            }
+            if (verified === false) {
+              setRightTab("logs");
+            }
+            void refreshLogs();
             void refreshTree().then(() => {
               if (lastChanged) void openFile(lastChanged);
               else if (openPath) void openFile(openPath);
@@ -518,12 +568,7 @@ export default function ProjectIdePage() {
               </div>
             )}
             {rightTab === "logs" && (
-              <div className="p-3">
-                {compileStatus === "idle" && (
-                  <p className="text-sm text-zinc-500">
-                    Compile the project to see build output.
-                  </p>
-                )}
+              <div className="p-3 overflow-auto h-full">
                 {compileStatus === "ok" && (
                   <p className="text-sm text-emerald-400 mb-3">
                     Build finished successfully.
@@ -534,8 +579,56 @@ export default function ProjectIdePage() {
                     Build failed. Details below may help fix the document.
                   </p>
                 )}
+                <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">
+                  Agent and compile traces
+                </p>
+                {logEntries.length === 0 && !log && (
+                  <p className="text-sm text-zinc-500">
+                    Compile or ask the agent — traces show up here so you can
+                    paste a trace id.
+                  </p>
+                )}
+                <ul className="space-y-1 mb-3">
+                  {logEntries.map((entry) => {
+                    const ok =
+                      entry.kind === "agent"
+                        ? entry.verified !== false
+                        : entry.success !== false;
+                    const label =
+                      entry.kind === "agent"
+                        ? `agent ${entry.rollback ? "rolled back" : ok ? "verified" : "failed"}`
+                        : entry.kind === "compile"
+                          ? `compile ${ok ? "ok" : "failed"}`
+                          : entry.kind || "log";
+                    return (
+                      <li key={entry.log_id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenLogId(entry.log_id);
+                            void getLog(projectId, entry.log_id).then((full) => {
+                              setLog(String(full.log || ""));
+                            });
+                          }}
+                          className={`w-full text-left text-xs px-2 py-1.5 rounded border ${
+                            openLogId === entry.log_id
+                              ? "border-zinc-500 bg-zinc-800/80 text-zinc-100"
+                              : "border-zinc-800 text-zinc-400 hover:bg-zinc-800/40"
+                          }`}
+                        >
+                          <span className={ok ? "text-emerald-400" : "text-amber-400"}>
+                            {label}
+                          </span>
+                          <span className="block font-mono text-[10px] text-zinc-500 truncate">
+                            {entry.log_id}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
                 {log ? (
-                  <details className="text-xs">
+                  <details open className="text-xs">
                     <summary className="cursor-pointer text-zinc-400 mb-2">
                       Show technical log
                     </summary>

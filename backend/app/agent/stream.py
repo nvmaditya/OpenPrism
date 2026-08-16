@@ -10,7 +10,18 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
+from datetime import datetime, timezone
+from uuid import uuid4
+
 from app.agent.graph import build_agent
+from app.agent.verify import (
+    load_tex_map,
+    project_structure,
+    restore_text_files,
+    snapshot_text_files,
+    verify_project,
+)
+from app.compile.engine import CompileEngine
 from app.domain.project import ProjectStore
 from app.settings import Settings
 
@@ -40,9 +51,11 @@ def _events_from_message(msg: BaseMessage) -> list[tuple[str, dict[str, Any]]]:
                     {"name": name, "args": args or {}, "id": tc_id},
                 )
             )
-            if name in ("write_project_file", "edit_project_file") and isinstance(
-                args, dict
-            ):
+            if name in (
+                "write_project_file",
+                "edit_project_file",
+                "add_tex_input",
+            ) and isinstance(args, dict):
                 path = args.get("path")
                 if path:
                     op = "edit" if name == "edit_project_file" else "write"
@@ -106,6 +119,36 @@ def _iter_update_messages(update: Any) -> Iterator[BaseMessage]:
             yield payload
 
 
+def _format_agent_log(
+    *,
+    trace_id: str,
+    user_message: str,
+    tools: list[dict[str, Any]],
+    files_touched: list[str],
+    verify: dict[str, Any],
+    rollback: bool,
+    excerpt: str,
+) -> str:
+    lines = [
+        f"trace_id={trace_id}",
+        f"verified={verify.get('ok')}",
+        f"rollback={rollback}",
+        f"user={user_message}",
+        "tools:",
+    ]
+    if tools:
+        for t in tools:
+            lines.append(f"  - {t.get('name')}: {str(t.get('result', ''))[:400]}")
+    else:
+        lines.append("  (none)")
+    lines.append("files: " + (", ".join(files_touched) if files_touched else "(none)"))
+    lines.append(f"verify: {verify}")
+    if excerpt:
+        lines.append("--- tex excerpt ---")
+        lines.append(excerpt[-4000:])
+    return "\n".join(lines) + "\n"
+
+
 def iter_agent_events(
     store: ProjectStore,
     project_id: str,
@@ -116,14 +159,21 @@ def iter_agent_events(
     system_prompt: str | None = None,
     open_path: str | None = None,
     open_preview: str | None = None,
+    compile_engine: CompileEngine | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """
     Run the project agent and yield (event_name, data) pairs.
 
     Always ends with a ``done`` event (ok true/false).
+    After the ReAct loop, a host-side verify hook runs (cannot be skipped).
     """
-    # Validate project exists early
     store.get(project_id)
+    engine = compile_engine or CompileEngine(store)
+    snap = snapshot_text_files(store, project_id)
+    before = project_structure(load_tex_map(store, project_id))
+    trace_id = uuid4().hex
+    tools_used: list[dict[str, Any]] = []
+    files_touched: list[str] = []
 
     graph = build_agent(
         store,
@@ -133,9 +183,11 @@ def iter_agent_events(
         system_prompt=system_prompt,
         open_path=open_path,
         open_preview=open_preview,
+        compile_engine=engine,
     )
 
     seen_file_paths: set[str] = set()
+    run_ok = True
     try:
         stream = graph.stream(
             {"messages": [HumanMessage(content=user_message)]},
@@ -144,17 +196,81 @@ def iter_agent_events(
         for chunk in stream:
             for msg in _iter_update_messages(chunk):
                 for event, data in _events_from_message(msg):
+                    if event == "tool_end":
+                        tools_used.append(
+                            {
+                                "name": data.get("name"),
+                                "result": data.get("result"),
+                            }
+                        )
                     if event == "file_changed":
                         path = data.get("path")
                         if path in seen_file_paths:
                             continue
                         if path:
                             seen_file_paths.add(str(path))
+                            files_touched.append(str(path))
                     yield event, data
-        yield "done", {"ok": True, "project_id": project_id}
     except Exception as exc:  # noqa: BLE001 — surface to client stream
+        run_ok = False
         yield "error", {"message": str(exc)}
-        yield "done", {"ok": False, "project_id": project_id}
+
+    verify = verify_project(
+        store, project_id, engine, before_structure=before
+    )
+    rollback = False
+    if not verify.ok or not run_ok:
+        restore_text_files(store, project_id, snap)
+        rollback = True
+
+    meta = {
+        "log_id": trace_id,
+        "project_id": project_id,
+        "kind": "agent",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "success": bool(verify.ok and run_ok),
+        "verified": bool(verify.ok and run_ok),
+        "rollback": rollback,
+        "user_message": user_message[:2000],
+        "files_touched": files_touched,
+        "tools": tools_used,
+        "verify": verify.to_dict(),
+    }
+    log_text = _format_agent_log(
+        trace_id=trace_id,
+        user_message=user_message,
+        tools=tools_used,
+        files_touched=files_touched,
+        verify=verify.to_dict(),
+        rollback=rollback,
+        excerpt=verify.compile_excerpt or "\n".join(verify.static_errors + verify.structure_errors),
+    )
+    try:
+        engine.write_log(project_id, trace_id, log_text, meta)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if rollback:
+        yield (
+            "token",
+            {
+                "text": (
+                    f"\n\nVerification failed; files restored. "
+                    f"Paste this trace: {trace_id}"
+                )
+            },
+        )
+
+    yield (
+        "done",
+        {
+            "ok": run_ok,
+            "project_id": project_id,
+            "trace_id": trace_id,
+            "verified": bool(verify.ok and run_ok),
+            "rollback": rollback,
+        },
+    )
 
 
 def iter_sse_bytes(
@@ -166,6 +282,7 @@ def iter_sse_bytes(
     settings: Settings | None = None,
     open_path: str | None = None,
     open_preview: str | None = None,
+    compile_engine: CompileEngine | None = None,
 ) -> Iterator[bytes]:
     """Yield UTF-8 SSE frames for StreamingResponse."""
     for event, data in iter_agent_events(
@@ -176,5 +293,6 @@ def iter_sse_bytes(
         settings=settings,
         open_path=open_path,
         open_preview=open_preview,
+        compile_engine=compile_engine,
     ):
         yield sse_frame(event, data).encode("utf-8")

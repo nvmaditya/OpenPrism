@@ -605,6 +605,7 @@ Each PR that changes agent surface updates **`AGENTS.md` changelog**.
 ### Phase 8 status
 
 - [x] End-user dashboard (**Your Projects**, Blank/Example) + IDE (Files, editor, Ask anything, Compiled/Logs) without primary debug chrome; PLAN map 8→10; pushed to OpenPrism.
+- [x] Resume Ask-anything: modular Example (`sections/` + `\input`), `add_tex_input`, host verify (static + compile + PDF text) with rollback, agent `trace_id` on Logs.
 
 ### Phase 9 status
 

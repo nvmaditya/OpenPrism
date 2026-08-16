@@ -10,6 +10,8 @@ from langgraph.prebuilt import create_react_agent
 
 from app.agent.providers import get_chat_model
 from app.agent.tools_fs import make_fs_tools
+from app.agent.tools_tex import make_tex_tools
+from app.compile.engine import CompileEngine
 from app.domain.project import ProjectStore
 from app.settings import Settings, get_settings
 
@@ -22,12 +24,32 @@ DEFAULT_SYSTEM = """You are the Prism research writing agent inside a LaTeX proj
    - list_project_files if unsure what exists
    - read_project_file before changing an existing file
    - edit_project_file for small/partial changes (preferred for main.tex)
-   - write_project_file for NEW files or full rewrites only
-4. When creating a new .tex file, write a complete, compilable fragment or full document as requested.
+   - add_tex_input for a NEW section file plus one \\input in main.tex
+   - write_project_file for other NEW files or full rewrites only
+4. When creating a new .tex section file, write a fragment (no \\documentclass).
 5. After tools succeed, briefly confirm what you wrote/changed (paths only). Do not dump entire huge files in chat unless asked.
 6. If a tool returns ERROR, fix the approach (re-read, narrower old_str) and retry.
 7. Valid LaTeX: balanced braces, proper environments, relative paths for \\includegraphics.
+8. You may call check_latex, compile_project, and extract_pdf_text mid-turn. The host still verifies after you finish and will roll back a broken document.
 """
+
+RESUME_ADDENDUM = """
+## Resume / modular TeX
+- Prefer edit_project_file on existing section files. Never rewrite main.tex wholesale.
+- Keep the preamble and existing \\input/\\include lines. New sections: add_tex_input.
+- Do not put \\documentclass inside sections/*.tex.
+- Keep existing section headings unless the user asked to rename or remove them.
+"""
+
+
+def _wants_resume_prompt(store: ProjectStore, project_id: str) -> bool:
+    try:
+        info = store.get(project_id)
+        if info.kind == "example":
+            return True
+        return any(p.startswith("sections/") for p in store.list_files(project_id))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def build_system_prompt(
@@ -36,10 +58,13 @@ def build_system_prompt(
     *,
     open_path: str | None = None,
     open_preview: str | None = None,
-    base: str = DEFAULT_SYSTEM,
+    base: str | None = None,
 ) -> str:
     """Augment system prompt with live project file list and optional open buffer."""
-    parts = [base.rstrip(), ""]
+    text = base if base is not None else DEFAULT_SYSTEM
+    if _wants_resume_prompt(store, project_id):
+        text = text.rstrip() + "\n" + RESUME_ADDENDUM
+    parts = [text.rstrip(), ""]
     try:
         files = store.list_files(project_id)
         if files:
@@ -70,7 +95,7 @@ def build_system_prompt(
 
     parts.append("")
     parts.append(
-        "Remember: file changes only count if you call write_project_file or edit_project_file."
+        "Remember: file changes only count if you call write_project_file, edit_project_file, or add_tex_input."
     )
     return "\n".join(parts)
 
@@ -84,6 +109,7 @@ def build_agent(
     system_prompt: str | None = None,
     open_path: str | None = None,
     open_preview: str | None = None,
+    compile_engine: CompileEngine | None = None,
 ):
     """
     Build a LangGraph ReAct agent bound to ``project_id``.
@@ -91,7 +117,8 @@ def build_agent(
     FS tools wrap the real ``ProjectStore`` so path sandbox rules apply.
     """
     chat = model if model is not None else get_chat_model(settings or get_settings())
-    tools = make_fs_tools(store, project_id)
+    engine = compile_engine or CompileEngine(store)
+    tools = make_fs_tools(store, project_id) + make_tex_tools(store, project_id, engine)
     prompt = system_prompt or build_system_prompt(
         store,
         project_id,
@@ -124,6 +151,7 @@ def run_agent(
     system_prompt: str | None = None,
     open_path: str | None = None,
     open_preview: str | None = None,
+    compile_engine: CompileEngine | None = None,
 ) -> dict[str, Any]:
     """Invoke the agent once for a user message."""
     graph = build_agent(
@@ -134,6 +162,7 @@ def run_agent(
         system_prompt=system_prompt,
         open_path=open_path,
         open_preview=open_preview,
+        compile_engine=compile_engine,
     )
     # Prepend system as HumanMessage context if graph ignored prompt (fallback)
     result = graph.invoke(
