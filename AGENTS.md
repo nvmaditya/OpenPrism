@@ -163,4 +163,5 @@ Live imagegen/GitHub install require credentials and are optional; list/load/loc
 - Phase 5: PDF serve (`/pdf`) + page previews under isolated `PRISM_PREVIEW_ROOT` (pdftoppm or Pillow fallback).
 - Phase 6: Progressive skills — five catalog packages, list/load/install/create, plugin scaffold; skill-home via `PRISM_SKILL_HOME`.
 - Resume Ask-anything: modular example (`sections/` + `\input`), `add_tex_input`, host verify+rollback, agent `trace_id` on the existing logs surface.
+- Phase 9: `GET /api/projects/{id}/outline` (heading + 1-based line); dashboard zip Import; IDE Outline jump + Project Info/Versions/Comments stubs. Agent model errors no longer roll back a passing document.
 

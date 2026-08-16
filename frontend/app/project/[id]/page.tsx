@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowUp,
@@ -13,19 +13,25 @@ import {
   FileCode2,
   FileText,
   Folder,
+  Info,
+  ListTree,
   Loader2,
   MessageSquare,
   Play,
   Save,
   ScrollText,
+  History,
+  UserPlus,
 } from "lucide-react";
 import {
   TreeNode,
   compileProject,
   getLog,
+  getOutline,
   getTree,
   listLogs,
   listProjects,
+  OutlineItem,
   pdfUrl,
   ProjectLog,
   readFile,
@@ -36,6 +42,32 @@ import {
 import { FilePanel } from "@/components/FilePanel";
 
 type ChatLine = { role: "user" | "assistant"; text: string };
+
+function offsetForLine(text: string, line: number): number {
+  if (line <= 1) return 0;
+  let pos = 0;
+  let current = 1;
+  while (current < line) {
+    const nl = text.indexOf("\n", pos);
+    if (nl < 0) return text.length;
+    pos = nl + 1;
+    current += 1;
+  }
+  return pos;
+}
+
+function revealEditorLine(
+  ta: HTMLTextAreaElement,
+  text: string,
+  line: number,
+): void {
+  const pos = offsetForLine(text, line);
+  ta.focus();
+  ta.setSelectionRange(pos, pos);
+  const parsed = parseFloat(getComputedStyle(ta).lineHeight);
+  const lineHeight = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
+  ta.scrollTop = Math.max(0, (line - 1) * lineHeight - ta.clientHeight / 4);
+}
 
 export default function ProjectIdePage() {
   const params = useParams();
@@ -51,7 +83,12 @@ export default function ProjectIdePage() {
   const [compileStatus, setCompileStatus] = useState<
     "idle" | "running" | "ok" | "failed"
   >("idle");
-  const [rightTab, setRightTab] = useState<"compiled" | "logs">("compiled");
+  const [rightTab, setRightTab] = useState<
+    "compiled" | "logs" | "info" | "versions" | "comments"
+  >("compiled");
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const [outline, setOutline] = useState<OutlineItem[]>([]);
+  const pendingLine = useRef<number | null>(null);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [pdfAvailable, setPdfAvailable] = useState(false);
   const [chatInput, setChatInput] = useState("");
@@ -60,6 +97,14 @@ export default function ProjectIdePage() {
   const [leftTab, setLeftTab] = useState<"files" | "chats">("files");
   const [logEntries, setLogEntries] = useState<ProjectLog[]>([]);
   const [openLogId, setOpenLogId] = useState<string | null>(null);
+
+  const refreshOutline = useCallback(async () => {
+    try {
+      setOutline(await getOutline(projectId));
+    } catch {
+      setOutline([]);
+    }
+  }, [projectId]);
 
   const refreshLogs = useCallback(async () => {
     try {
@@ -98,12 +143,13 @@ export default function ProjectIdePage() {
         if (p) setProjectName(p.name);
         await refreshTree();
         await refreshLogs();
+        await refreshOutline();
         await openFile("main.tex");
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
-  }, [projectId, refreshTree, refreshLogs, openFile]);
+  }, [projectId, refreshTree, refreshLogs, refreshOutline, openFile]);
 
   useEffect(() => {
     if (!openLogId) return;
@@ -112,6 +158,25 @@ export default function ProjectIdePage() {
       .catch(() => {});
   }, [openLogId, projectId]);
 
+  useEffect(() => {
+    const line = pendingLine.current;
+    const ta = editorRef.current;
+    if (line == null || !ta) return;
+    pendingLine.current = null;
+    requestAnimationFrame(() => revealEditorLine(ta, content, line));
+  }, [content, openPath]);
+
+  async function jumpToOutline(item: OutlineItem) {
+    pendingLine.current = item.line;
+    if (openPath === item.path) {
+      const ta = editorRef.current;
+      if (ta) revealEditorLine(ta, content, item.line);
+      pendingLine.current = null;
+      return;
+    }
+    await openFile(item.path);
+  }
+
   async function save() {
     if (!openPath) return;
     setError(null);
@@ -119,6 +184,7 @@ export default function ProjectIdePage() {
       await writeFile(projectId, openPath, content);
       setDirty(false);
       await refreshTree();
+      await refreshOutline();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -240,6 +306,7 @@ export default function ProjectIdePage() {
               setRightTab("logs");
             }
             void refreshLogs();
+            void refreshOutline();
             void refreshTree().then(() => {
               if (lastChanged) void openFile(lastChanged);
               else if (openPath) void openFile(openPath);
@@ -298,6 +365,15 @@ export default function ProjectIdePage() {
           <span className="sr-only">All projects</span>
         </Link>
         <span className="font-medium truncate max-w-[200px]">{projectName}</span>
+        <button
+          type="button"
+          disabled
+          title="Local only — invite is not available"
+          className="inline-flex items-center gap-1 text-xs text-zinc-600 cursor-not-allowed"
+        >
+          <UserPlus className="h-3.5 w-3.5" aria-hidden />
+          Invite
+        </button>
         <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
@@ -359,29 +435,60 @@ export default function ProjectIdePage() {
               Chats
             </button>
           </div>
-          <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {leftTab === "files" && (
-              <FilePanel
-                projectId={projectId}
-                tree={tree}
-                openPath={openPath}
-                onOpen={(p) => void openFile(p)}
-                onRefresh={refreshTree}
-                onError={(m) => setError(m)}
-                onDeleted={(paths) => {
-                  if (openPath && paths.includes(openPath)) {
-                    setOpenPath(null);
-                    setContent("");
-                    setDirty(false);
-                  }
-                }}
-                onRenamed={(from, to) => {
-                  if (openPath === from) {
-                    setOpenPath(to);
-                    void openFile(to);
-                  }
-                }}
-              />
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <FilePanel
+                  projectId={projectId}
+                  tree={tree}
+                  openPath={openPath}
+                  onOpen={(p) => void openFile(p)}
+                  onRefresh={refreshTree}
+                  onError={(m) => setError(m)}
+                  onDeleted={(paths) => {
+                    if (openPath && paths.includes(openPath)) {
+                      setOpenPath(null);
+                      setContent("");
+                      setDirty(false);
+                    }
+                  }}
+                  onRenamed={(from, to) => {
+                    if (openPath === from) {
+                      setOpenPath(to);
+                      void openFile(to);
+                    }
+                  }}
+                />
+              </div>
+            )}
+            {leftTab === "files" && (
+              <div className="border-t border-zinc-800 max-h-48 overflow-auto shrink-0">
+                <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-zinc-500 flex items-center gap-1">
+                  <ListTree className="h-3 w-3" aria-hidden />
+                  Outline
+                </div>
+                {outline.length === 0 ? (
+                  <p className="px-2 pb-2 text-[11px] text-zinc-600">
+                    No sections yet.
+                  </p>
+                ) : (
+                  <ul className="pb-2">
+                    {outline.map((item) => (
+                      <li key={`${item.path}:${item.line}:${item.title}`}>
+                        <button
+                          type="button"
+                          onClick={() => void jumpToOutline(item)}
+                          className="w-full text-left px-2 py-0.5 text-[12px] text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/70 truncate"
+                          style={{ paddingLeft: 8 + Math.max(0, item.level - 1) * 10 }}
+                          title={`${item.path}:${item.line}`}
+                        >
+                          {item.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             )}
             {leftTab === "chats" && (
               <div className="px-2 py-2 text-xs text-zinc-500 space-y-2 h-full overflow-auto">
@@ -412,6 +519,7 @@ export default function ProjectIdePage() {
             {dirty && <span className="text-zinc-600">Unsaved</span>}
           </div>
           <textarea
+            ref={editorRef}
             className="flex-1 min-h-0 w-full bg-[#0c0c0e] text-zinc-200 font-mono text-[13px] p-4 outline-none resize-none leading-relaxed"
             value={content}
             onChange={(e) => {
@@ -497,6 +605,42 @@ export default function ProjectIdePage() {
               <ScrollText className="h-3.5 w-3.5" aria-hidden />
               Logs
             </button>
+            <button
+              type="button"
+              onClick={() => setRightTab("info")}
+              className={`flex-1 inline-flex items-center justify-center gap-1 py-2.5 ${
+                rightTab === "info"
+                  ? "text-zinc-100 border-b-2 border-zinc-100"
+                  : "text-zinc-500"
+              }`}
+            >
+              <Info className="h-3.5 w-3.5" aria-hidden />
+              Info
+            </button>
+            <button
+              type="button"
+              onClick={() => setRightTab("versions")}
+              className={`flex-1 inline-flex items-center justify-center gap-1 py-2.5 ${
+                rightTab === "versions"
+                  ? "text-zinc-100 border-b-2 border-zinc-100"
+                  : "text-zinc-500"
+              }`}
+            >
+              <History className="h-3.5 w-3.5" aria-hidden />
+              Versions
+            </button>
+            <button
+              type="button"
+              onClick={() => setRightTab("comments")}
+              className={`flex-1 inline-flex items-center justify-center gap-1 py-2.5 ${
+                rightTab === "comments"
+                  ? "text-zinc-100 border-b-2 border-zinc-100"
+                  : "text-zinc-500"
+              }`}
+            >
+              <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+              Comments
+            </button>
           </div>
           <div className="px-3 py-1.5 text-xs text-zinc-500 border-b border-zinc-800 flex items-center justify-between">
             <span
@@ -565,6 +709,33 @@ export default function ProjectIdePage() {
                     </button>
                   </div>
                 )}
+              </div>
+            )}
+            {rightTab === "info" && (
+              <div className="p-4 text-sm text-zinc-400 space-y-2">
+                <h2 className="text-zinc-100 font-medium">Project Info</h2>
+                <p>{projectName}</p>
+                <p className="text-xs text-zinc-600">
+                  Local project. Name and files live on this machine only.
+                </p>
+              </div>
+            )}
+            {rightTab === "versions" && (
+              <div className="p-4 text-sm text-zinc-400 space-y-2">
+                <h2 className="text-zinc-100 font-medium">Versions</h2>
+                <p>
+                  Version history is not available in this local build. Save
+                  copies of the project folder if you need snapshots.
+                </p>
+              </div>
+            )}
+            {rightTab === "comments" && (
+              <div className="p-4 text-sm text-zinc-400 space-y-2">
+                <h2 className="text-zinc-100 font-medium">Comments</h2>
+                <p>
+                  Comments are not available. This is a single-user local
+                  workspace — there is no shared review thread.
+                </p>
               </div>
             )}
             {rightTab === "logs" && (

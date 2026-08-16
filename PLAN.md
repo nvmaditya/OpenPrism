@@ -2,7 +2,7 @@
 
 # Prism Reverse-Engineer — Implementation Plan
 
-> **Status:** Phases **0–8 complete** on https://github.com/nvmaditya/OpenPrism · **Next: Phase 9** (outline, import polish, stubs)  
+> **Status:** Phases **0–9 complete** on https://github.com/nvmaditya/OpenPrism · **Next: Phase 10** (harden and ship)  
 > **Living plan:** `C:\Code\prism\PLAN.md` (source of truth for phase map)  
 > **Updated:** 2026-08-07 · Phase 8 redefined as end-user Prism UX + abstraction; old Phase 9 ship split into Phase 9 + Phase 10
 
@@ -429,7 +429,7 @@ Ship a **Prism-like end-user** dashboard + project editor. Hide developer/debug 
 
 ### Phase 9 — Outline, import polish, stubs (next)
 
-**Status:** pending  
+**Status:** done  
 
 **Do:**
 - Document outline jump (LaTeX sections → editor line)  
@@ -438,6 +438,8 @@ Ship a **Prism-like end-user** dashboard + project editor. Hide developer/debug 
 - Invite/Shared disabled with single-user local affordance  
 
 **Exit:** outline + import happy path; stubs present without multi-tenant auth.
+
+**Shipped:** `GET /api/projects/{id}/outline` · dashboard zip Import · IDE Outline jump · Project Info / Versions / Comments stubs · Invite/Shared local-only.
 
 ---
 
@@ -567,8 +569,8 @@ Each PR that changes agent surface updates **`AGENTS.md` changelog**.
 | 6 | Skills full surface | ✅ done |
 | 7 | SSE streaming chat | ✅ done |
 | 8 | End-user Prism UX + abstraction | ✅ done |
-| 9 | Outline, import polish, stubs | ⏳ next |
-| 10 | Harden and ship | ⏳ pending |
+| 9 | Outline, import polish, stubs | ✅ done |
+| 10 | Harden and ship | ⏳ next |
 
 ### Phase 0 status
 
@@ -609,7 +611,7 @@ Each PR that changes agent surface updates **`AGENTS.md` changelog**.
 
 ### Phase 9 status
 
-- [ ] Outline jump, import UX, Versions/Comments/Project Info stubs.
+- [x] Outline jump, import UX, Versions/Comments/Project Info stubs.
 
 ### Phase 10 status
 

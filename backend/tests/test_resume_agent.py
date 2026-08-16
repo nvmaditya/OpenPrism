@@ -341,6 +341,44 @@ def test_chat_compile_fail_rolls_back(app_client):
     assert (projects_root / pid / "main.tex").read_text(encoding="utf-8") == original
 
 
+def test_agent_crash_does_not_claim_verify_fail_or_rollback(app_client):
+    """Trace fdd141f6: model error with no writes was labeled verification failed."""
+    from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.outputs import ChatResult
+
+    class BoomModel(BaseChatModel):
+        @property
+        def _llm_type(self) -> str:
+            return "boom"
+
+        def bind_tools(self, tools, **kwargs):  # noqa: ANN001
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # noqa: ANN001
+            raise RuntimeError("simulated-llm-crash")
+
+    app, client, projects_root = app_client
+    pid = client.post("/api/projects", json={"kind": "blank"}).json()["id"]
+    original = (projects_root / pid / "main.tex").read_bytes()
+    app.state.chat_model_override = BoomModel()
+    events = _chat(client, pid, "remove my pfp and create a resume")
+    done = _done(events)
+    names = [e["event"] for e in events]
+    assert "error" in names
+    assert done.get("rollback") is False, done
+    assert done.get("verified") is True, done
+    assert (projects_root / pid / "main.tex").read_bytes() == original
+    tokens = " ".join(
+        str(e["data"].get("text", "")) for e in events if e["event"] == "token"
+    )
+    assert "Verification failed" not in tokens
+    err = next(e for e in events if e["event"] == "error")
+    assert "simulated-llm-crash" in str(err["data"].get("message", ""))
+    trace_id = done.get("trace_id")
+    got = client.get(f"/api/projects/{pid}/logs/{trace_id}").json()
+    assert "simulated-llm-crash" in str(got.get("error") or got.get("log") or "")
+
+
 def test_check_latex_reports_unbalanced_environment():
     from app.agent.verify import check_latex
 

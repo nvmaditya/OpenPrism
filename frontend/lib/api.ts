@@ -63,6 +63,38 @@ export async function deleteProject(id: string): Promise<void> {
   await json(await fetch(apiUrl(`/api/projects/${id}`), { method: "DELETE" }));
 }
 
+export async function importProjectZip(
+  file: File,
+  name?: string,
+): Promise<Project> {
+  const form = new FormData();
+  form.append("file", file);
+  if (name) form.append("name", name);
+  return json(
+    await fetch(apiUrl("/api/projects/import"), {
+      method: "POST",
+      body: form,
+    }),
+  );
+}
+
+export type OutlineItem = {
+  title: string;
+  line: number;
+  level: number;
+  path: string;
+  macro?: string;
+};
+
+export async function getOutline(projectId: string): Promise<OutlineItem[]> {
+  const data = await json<{ outline: OutlineItem[] }>(
+    await fetch(apiUrl(`/api/projects/${projectId}/outline`), {
+      cache: "no-store",
+    }),
+  );
+  return data.outline || [];
+}
+
 export async function getTree(projectId: string): Promise<TreeNode> {
   const data = await json<{ tree: TreeNode }>(
     await fetch(apiUrl(`/api/projects/${projectId}/tree`), { cache: "no-store" }),

@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from app.domain.project import ProjectError, ProjectKind, ProjectStore
+from app.outline.parse_tex import outline_project
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -94,6 +95,16 @@ def delete_project(project_id: str, request: Request) -> dict:
     try:
         store.delete(project_id)
         return {"ok": True, "id": project_id}
+    except ProjectError as exc:
+        raise _http(exc) from exc
+
+
+@router.get("/{project_id}/outline")
+def get_outline(project_id: str, request: Request) -> dict:
+    """LaTeX headings with 1-based source lines (for the IDE Outline list)."""
+    store = _store(request)
+    try:
+        return {"outline": outline_project(store, project_id)}
     except ProjectError as exc:
         raise _http(exc) from exc
 

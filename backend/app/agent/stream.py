@@ -188,6 +188,7 @@ def iter_agent_events(
 
     seen_file_paths: set[str] = set()
     run_ok = True
+    run_error: str | None = None
     try:
         stream = graph.stream(
             {"messages": [HumanMessage(content=user_message)]},
@@ -213,13 +214,16 @@ def iter_agent_events(
                     yield event, data
     except Exception as exc:  # noqa: BLE001 — surface to client stream
         run_ok = False
-        yield "error", {"message": str(exc)}
+        run_error = str(exc)
+        yield "error", {"message": run_error}
 
     verify = verify_project(
         store, project_id, engine, before_structure=before
     )
+    # Only restore when the document itself failed checks — not when the
+    # model crashed without a bad write (trace fdd141f6).
     rollback = False
-    if not verify.ok or not run_ok:
+    if not verify.ok:
         restore_text_files(store, project_id, snap)
         rollback = True
 
@@ -229,8 +233,9 @@ def iter_agent_events(
         "kind": "agent",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "success": bool(verify.ok and run_ok),
-        "verified": bool(verify.ok and run_ok),
+        "verified": bool(verify.ok),
         "rollback": rollback,
+        "error": run_error,
         "user_message": user_message[:2000],
         "files_touched": files_touched,
         "tools": tools_used,
@@ -243,8 +248,11 @@ def iter_agent_events(
         files_touched=files_touched,
         verify=verify.to_dict(),
         rollback=rollback,
-        excerpt=verify.compile_excerpt or "\n".join(verify.static_errors + verify.structure_errors),
+        excerpt=verify.compile_excerpt
+        or "\n".join(verify.static_errors + verify.structure_errors),
     )
+    if run_error:
+        log_text = f"error={run_error}\n" + log_text
     try:
         engine.write_log(project_id, trace_id, log_text, meta)
     except Exception:  # noqa: BLE001
@@ -260,6 +268,16 @@ def iter_agent_events(
                 )
             },
         )
+    elif run_error:
+        yield (
+            "token",
+            {
+                "text": (
+                    f"\n\nAgent error (document unchanged). "
+                    f"Paste this trace: {trace_id}"
+                )
+            },
+        )
 
     yield (
         "done",
@@ -267,8 +285,9 @@ def iter_agent_events(
             "ok": run_ok,
             "project_id": project_id,
             "trace_id": trace_id,
-            "verified": bool(verify.ok and run_ok),
+            "verified": bool(verify.ok),
             "rollback": rollback,
+            "error": run_error,
         },
     )
 

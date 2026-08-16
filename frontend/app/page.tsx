@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FileText,
   FolderOpen,
@@ -11,11 +11,13 @@ import {
   Users,
   FilePlus2,
   BookOpen,
+  Upload,
 } from "lucide-react";
 import {
   Project,
   createProject,
   deleteProject,
+  importProjectZip,
   listProjects,
 } from "@/lib/api";
 
@@ -38,6 +40,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const importRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -72,6 +75,19 @@ export default function DashboardPage() {
     }
   }
 
+  async function onImportZip(file: File) {
+    setBusy(true);
+    setError(null);
+    try {
+      const stem = file.name.replace(/\.zip$/i, "") || "Imported project";
+      const p = await importProjectZip(file, stem);
+      window.location.href = `/project/${p.id}`;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
   async function onDelete(id: string, name: string) {
     if (!confirm(`Delete “${name}”? This cannot be undone.`)) return;
     setBusy(true);
@@ -99,7 +115,11 @@ export default function DashboardPage() {
             <FolderOpen className="h-4 w-4 shrink-0" aria-hidden />
             Your Projects
           </div>
-          <div className="rounded-md px-3 py-2 text-zinc-500 cursor-default flex items-center gap-2">
+          <div
+            className="rounded-md px-3 py-2 text-zinc-500 cursor-not-allowed flex items-center gap-2"
+            title="Local only — sharing is not available"
+            aria-disabled="true"
+          >
             <Users className="h-4 w-4 shrink-0" aria-hidden />
             Shared with you
           </div>
@@ -110,7 +130,28 @@ export default function DashboardPage() {
       <main className="flex-1 flex flex-col min-w-0">
         <header className="flex items-center justify-between gap-4 px-8 py-5 border-b border-zinc-800/60">
           <h1 className="text-xl font-semibold tracking-tight">Your Projects</h1>
-          <div className="relative">
+          <div className="flex items-center gap-2">
+            <input
+              ref={importRef}
+              type="file"
+              accept=".zip,application/zip"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) void onImportZip(f);
+              }}
+            />
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => importRef.current?.click()}
+              className="inline-flex items-center gap-1.5 rounded-full border border-zinc-600 text-zinc-200 text-sm font-medium px-4 py-2 hover:bg-zinc-900 disabled:opacity-50"
+            >
+              <Upload className="h-4 w-4" aria-hidden />
+              Import
+            </button>
+            <div className="relative">
             <button
               type="button"
               disabled={busy}
@@ -140,6 +181,7 @@ export default function DashboardPage() {
                 </button>
               </div>
             )}
+            </div>
           </div>
         </header>
 
