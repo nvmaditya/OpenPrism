@@ -44,11 +44,23 @@ REJECTED = [
     ("prn", "device_name"),
     ("COM0.log", "device_name"),
     ("com¹.txt", "device_name"),
+    # Windows strips trailing spaces before the extension, so these are devices.
+    ("con .tex", "device_name"),
+    ("nul .bib", "device_name"),
+    ("aux  .tex", "device_name"),
+    ("COM1 .txt", "device_name"),
+    ("sub/aux  .tex", "device_name"),
+    ("conin$", "device_name"),
+    ("CONOUT$.tex", "device_name"),
     ("name.", "trailing_dot_or_space"),
     ("folder./x.tex", "trailing_dot_or_space"),
     ("name ", "trailing_dot_or_space"),
     ("...", "trailing_dot_or_space"),
     ("a" * 256, "segment_too_long"),
+    # 128 two-byte characters is 256 UTF-8 bytes: within 255 code points but
+    # over the 255-byte file-system limit.
+    ("é" * 128 + ".tex", "segment_too_long"),
+    ("中" * 90 + ".tex", "segment_too_long"),
     ("/".join(["abcdefghij"] * 22), "too_long"),
 ]
 
@@ -79,6 +91,9 @@ def test_rejected_paths(path: str, reason: str) -> None:
         ("com10.txt", "com10.txt"),
         ("a..b.tex", "a..b.tex"),
         ("a" * 240, "a" * 240),
+        # 120 two-byte characters is 240 UTF-8 bytes, within the 255-byte limit.
+        ("é" * 120, "é" * 120),
+        ("conin.tex", "conin.tex"),
         ("/".join(["abcdefghi"] * 24), "/".join(["abcdefghi"] * 24)),
     ],
 )

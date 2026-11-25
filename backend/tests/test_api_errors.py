@@ -44,6 +44,9 @@ DOMAIN_ERRORS: list[tuple[AppError, int, str, dict[str, object]]] = [
     ),
     (errors.ImportRejected("zip_slip", "no"), 400, "import_rejected", {"reason": "zip_slip"}),
     (errors.PayloadTooLarge(50), 413, "payload_too_large", {"limit_mb": 50}),
+    (errors.FileBusy("a.tex"), 409, "file_busy", {"path": "a.tex"}),
+    (errors.ProjectBusy("p1"), 409, "project_busy", {"project_id": "p1"}),
+    (errors.UnsafeProjectFile("a.tex"), 409, "unsafe_project_file", {"path": "a.tex"}),
     (errors.LogNotFound("l1"), 404, "log_not_found", {"log_id": "l1"}),
     (errors.PdfNotFound(), 404, "pdf_not_found", {}),
 ]

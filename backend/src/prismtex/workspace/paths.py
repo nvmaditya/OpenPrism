@@ -21,14 +21,19 @@ __all__ = [
     "resolve_in",
 ]
 
+# A file-system name limit, measured in UTF-8 bytes. Linux NAME_MAX is 255
+# bytes; NTFS and HFS+ cap at 255 UTF-16 units and APFS at 255 UTF-8 bytes.
+# A UTF-8 byte count is never smaller than a UTF-16 unit count, so one check
+# in bytes covers every one of them.
 MAX_SEGMENT = 255
 MAX_PATH = 240
 INTERNAL_DIRS = frozenset({".git", ".prism"})
 
 _DRIVE = re.compile(r"^[A-Za-z]:")
 _RESERVED_CHARS = frozenset('<>:"|?*')
-# Windows treats the superscript digits as device numbers too (COM¹, LPT²).
-_DEVICE = re.compile(r"^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])$", re.IGNORECASE)
+# Windows treats the superscript digits as device numbers too (COM¹, LPT²), and
+# CONIN$/CONOUT$ are reserved alongside CON, PRN and the rest.
+_DEVICE = re.compile(r"^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$", re.IGNORECASE)
 _ROOT_FILE_FORBIDDEN = frozenset("%#$&~^{}\\")
 
 _MESSAGES = {
@@ -42,7 +47,7 @@ _MESSAGES = {
     "reserved_char": 'Paths may not contain any of < > : " | ? *.',
     "device_name": "That name is reserved by Windows (CON, PRN, AUX, NUL, COM1, LPT1, ...).",
     "trailing_dot_or_space": "File and folder names may not end in a dot or a space.",
-    "segment_too_long": f"File and folder names may be at most {MAX_SEGMENT} characters.",
+    "segment_too_long": f"File and folder names may be at most {MAX_SEGMENT} bytes (UTF-8).",
     "too_long": f"Paths may be at most {MAX_PATH} characters.",
     "internal": "This folder is reserved and cannot be read or changed.",
     "outside_root": "The path leads outside the project folder.",
@@ -74,11 +79,14 @@ def check_relative_path(path: str) -> str:
             raise _deny(path, "parent")
         if any(ch in _RESERVED_CHARS for ch in seg):
             raise _deny(path, "reserved_char")
-        if _DEVICE.match(seg.split(".", 1)[0]):
+        # Windows matches a device name against the part before the first dot
+        # with trailing spaces stripped, so "con .tex" and "nul.bib" both resolve
+        # to a device. Mirror that, rather than only the exact "con" case.
+        if _DEVICE.match(seg.partition(".")[0].rstrip(" ")):
             raise _deny(path, "device_name")
         if seg.endswith((".", " ")):
             raise _deny(path, "trailing_dot_or_space")
-        if len(seg) > MAX_SEGMENT:
+        if len(seg.encode("utf-8")) > MAX_SEGMENT:
             raise _deny(path, "segment_too_long")
     normalized = "/".join(segments)
     if len(normalized) > MAX_PATH:

@@ -8,6 +8,7 @@ live in `state/<id>/project.json`, outside the project folder (ADR 0004).
 from __future__ import annotations
 
 import enum
+import errno
 import json
 import os
 import re
@@ -15,8 +16,9 @@ import shutil
 import stat
 import tempfile
 import threading
+import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from importlib import resources
@@ -25,6 +27,7 @@ from typing import Any, BinaryIO, Final, Literal, get_args
 
 from prismtex.errors import (
     AppError,
+    FileBusy,
     FileExists,
     FileNotFound,
     InvalidRequest,
@@ -62,6 +65,18 @@ SOURCE_EXTENSIONS = frozenset(
 MAX_TEXT_BYTES = 10 * 2**20
 MAX_NAME = 120
 SCHEMA = 1
+
+# Atomic writes land in a temp file in the target's own folder, then os.replace.
+# A crash can leave one behind, so the name is reserved: it never shows in a
+# listing and cannot be read or written through the file API.
+TEMP_PREFIX = ".prismtex-"
+TEMP_SUFFIX = ".tmp"
+
+# A reader (usually a compile) can hold a file open on Windows without granting
+# delete sharing, so os.replace/os.rename/unlink raise PermissionError. A short
+# retry rides out a compile pass; if it persists the caller gets a 409, not 500.
+_WRITE_RETRIES = 10
+_WRITE_RETRY_DELAY_S = 0.05
 
 _PROJECT_ID = re.compile(r"[0-9a-f]{32}")
 _DEFAULT_NAMES: dict[str, str] = {
@@ -295,7 +310,7 @@ class ProjectStore:
             eol = detect_eol(current) if current is not None else "lf"
             data = encode_text(normalized, eol)
             _ensure_parent(self.layout.project_dir(project_id), rel, target)
-            _atomic_write(target, data)
+            _atomic_write(target, data, rel)
         return FileVersion(text=normalized, version=content_version(data), eol=eol)
 
     def write_bytes(self, project_id: str, path: str, data: bytes) -> FileEntry:
@@ -306,7 +321,7 @@ class ProjectStore:
             if target.is_dir():
                 raise InvalidRequest(f"'{rel}' is a folder.", field="path")
             _ensure_parent(self.layout.project_dir(project_id), rel, target)
-            _atomic_write(target, data)
+            _atomic_write(target, data, rel)
         return FileEntry(rel, len(data), file_kind(rel))
 
     def upload(self, project_id: str, *, filename: str, data: bytes, folder: str = "") -> FileEntry:
@@ -330,14 +345,14 @@ class ProjectStore:
             if os.path.lexists(dst_path) and not _same_entry(src_path, dst_path):
                 raise FileExists(dst_rel)
             _ensure_parent(self.layout.project_dir(project_id), dst_rel, dst_path)
-            os.rename(src_path, dst_path)
+            _mutate_path(lambda: os.rename(src_path, dst_path), src_rel)
 
     def delete_file(self, project_id: str, path: str) -> None:
         """Delete a file, or a folder with everything in it."""
         rel, target = self._locate_entry(project_id, path)
         with self._lock(project_id):
             if target.is_symlink() or target.is_file():
-                target.unlink()
+                _mutate_path(target.unlink, rel)
             elif target.is_dir():
                 _rmtree(target)
             else:
@@ -370,6 +385,8 @@ class ProjectStore:
         rel = check_relative_path(path)
         if is_internal(rel):
             raise PathPolicyError(path, "internal", "This folder is reserved and cannot be used.")
+        if any(_is_temp_name(seg) for seg in rel.split("/")):
+            raise PathPolicyError(path, "internal", "This name is reserved and cannot be used.")
         return rel
 
     def _locate(self, project_id: str, path: str) -> tuple[str, Path]:
@@ -513,9 +530,9 @@ def _ensure_parent(root: Path, rel: str, target: Path) -> None:
     resolve_in(root, rel)
 
 
-def _atomic_write(target: Path, data: bytes) -> None:
+def _atomic_write(target: Path, data: bytes, rel: str | None = None) -> None:
     mode = stat.S_IMODE(target.stat().st_mode) if target.is_file() else 0o644
-    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=".prismtex-", suffix=".tmp")
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=TEMP_PREFIX, suffix=TEMP_SUFFIX)
     tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as out:
@@ -523,10 +540,55 @@ def _atomic_write(target: Path, data: bytes) -> None:
             out.flush()
             os.fsync(out.fileno())
         os.chmod(tmp, mode)
-        os.replace(tmp, target)
+        _mutate_path(lambda: os.replace(tmp, target), rel or target.name)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _is_temp_name(name: str) -> bool:
+    """True for a name reserved by `_atomic_write`'s temp files."""
+    return name.startswith(TEMP_PREFIX) and name.endswith(TEMP_SUFFIX)
+
+
+def _mutate_path(action: Callable[[], None], rel: str) -> None:
+    """Run a file mutation (replace, rename, unlink), handling two OS quirks.
+
+    A Windows sharing violation (PermissionError) is retried briefly, then
+    turned into a 409 FileBusy. A name too long for the file system
+    (ENAMETOOLONG) becomes a 400 PathPolicyError instead of a 500.
+    """
+    for attempt in range(_WRITE_RETRIES):
+        try:
+            action()
+            return
+        except PermissionError:
+            if attempt + 1 == _WRITE_RETRIES:
+                raise FileBusy(rel) from None
+            time.sleep(_WRITE_RETRY_DELAY_S)
+        except OSError as exc:
+            if exc.errno == errno.ENAMETOOLONG:
+                raise PathPolicyError(
+                    rel, "too_long", "The file name or path is too long for this file system."
+                ) from exc
+            raise
+
+
+def remove_stale_temp_files(layout: DataLayout) -> None:
+    """Delete atomic-write temp files left by a crash, run once at startup.
+
+    Startup is single-threaded and precedes any serving, so no write is in
+    flight; every `.prismtex-*.tmp` is a leftover and safe to remove.
+    """
+    if not layout.projects.is_dir():
+        return
+    for dirpath, _dirnames, filenames in os.walk(layout.projects):
+        for name in filenames:
+            if _is_temp_name(name):
+                try:
+                    Path(dirpath, name).unlink()
+                except OSError:
+                    pass
 
 
 def _rmtree(path: Path) -> None:
@@ -561,6 +623,8 @@ def _walk_files(root: Path) -> Iterator[tuple[str, int]]:
         dirnames[:] = [d for d in dirnames if not _hidden(d)]
         base = Path(dirpath)
         for filename in filenames:
+            if _is_temp_name(filename):
+                continue
             full = base / filename
             if not _contained(root, full):
                 continue
@@ -591,7 +655,11 @@ def _tree_node(root: Path, folder: Path, *, name: str, rel: str) -> dict[str, An
         key=lambda e: (e.name.lower(), e.name),
     )
     files = sorted(
-        (e for e in entries if e.is_file() and _contained(root, Path(e.path))),
+        (
+            e
+            for e in entries
+            if e.is_file() and not _is_temp_name(e.name) and _contained(root, Path(e.path))
+        ),
         key=lambda e: (e.name.lower(), e.name),
     )
     for entry in dirs:

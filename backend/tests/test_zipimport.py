@@ -4,6 +4,7 @@ import io
 import stat
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -162,6 +163,47 @@ def test_not_a_zip(tmp_path: Path) -> None:
 def test_file_and_folder_clash(tmp_path: Path) -> None:
     store = store_with(tmp_path)
     assert reject(store, make_zip({"a": b"file", "a/b.tex": b"x", "main.tex": DOC})) == "bad_zip"
+
+
+def test_case_only_file_and_folder_clash(tmp_path: Path) -> None:
+    # On a case-insensitive disk `figs` and `Figs/` collide; reject on every OS.
+    store = store_with(tmp_path)
+    assert reject(store, make_zip({"Figs/a.png": b"\x89PNG", "figs": b"x", "main.tex": DOC})) == (
+        "bad_zip"
+    )
+
+
+def test_many_directory_entries_are_rejected(tmp_path: Path) -> None:
+    # The central directory names 100 entries; the file-count cap must bound the
+    # work before `zipfile` materializes a ZipInfo for each one.
+    store = store_with(tmp_path, import_max_files=10)
+    archive = make_zip({**{f"d{i}/": b"" for i in range(100)}, "main.tex": DOC})
+    assert reject(store, archive) == "too_many_files"
+
+
+def test_a_few_directory_entries_still_import(tmp_path: Path) -> None:
+    store = store_with(tmp_path, import_max_files=10)
+    info = store.import_zip(make_zip({"a/": b"", "a/b/": b"", "a/b/main.tex": DOC}))
+    assert files_of(store, info.id) == {"b/main.tex"}
+
+
+def test_extraction_oserror_is_rejected_not_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A file-system error during unpacking (e.g. a name too long, a case clash on
+    # a case-insensitive disk) is an ImportRejected, never an unhandled 500.
+    import pathlib
+
+    store = store_with(tmp_path)
+    original_open = pathlib.Path.open
+
+    def boom(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name == "main.tex":
+            raise OSError("simulated file-system failure")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "open", boom)
+    assert reject(store, make_zip({"main.tex": DOC})) == "bad_zip"
 
 
 def test_damaged_entry_removes_the_project(tmp_path: Path) -> None:

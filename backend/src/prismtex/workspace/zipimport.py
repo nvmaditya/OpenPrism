@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import shutil
 import stat
+import struct
 import zipfile
 import zlib
 from collections.abc import Callable, Iterable
@@ -32,6 +33,16 @@ _DOCUMENTCLASS = re.compile(r"\\documentclass(?![A-Za-z@])")
 # Unpacking can fail half-way on a damaged archive even after the checks pass.
 _EXTRACT_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError)
 
+# End-of-central-directory signatures and sizes, for counting entries from the
+# archive tail before `zipfile` materializes a ZipInfo for every one of them.
+_EOCD_SIG = b"PK\x05\x06"
+_EOCD_SIZE = 22
+_MAX_COMMENT = 0xFFFF
+_Z64_LOCATOR_SIG = b"PK\x06\x07"
+_Z64_LOCATOR_SIZE = 20
+_Z64_EOCD_SIG = b"PK\x06\x06"
+_CD_RECORD_MIN = 46  # the fixed part of one central-directory file header
+
 
 @dataclass(frozen=True)
 class _Entry:
@@ -48,6 +59,10 @@ class ValidatedZip:
 
     @classmethod
     def open(cls, stream: BinaryIO, *, max_bytes: int, max_files: int) -> Self:
+        # Count entries from the archive tail first. `zipfile.ZipFile` reads the
+        # whole central directory into memory, so a hostile archive that claims
+        # millions of entries would exhaust RAM before any limit applied.
+        _check_entry_count(stream, max_files=max_files)
         try:
             archive = zipfile.ZipFile(stream)
         except (zipfile.BadZipFile, OSError, EOFError) as exc:
@@ -76,6 +91,14 @@ class ValidatedZip:
                 raise ImportRejected(
                     "bad_zip", f"The archive is damaged and '{entry.info.filename}' cannot be read."
                 ) from exc
+            except OSError as exc:
+                # A name that is too long for the file system, or a file/folder
+                # case clash on a case-insensitive disk, surfaces here. Report it
+                # as a rejected import rather than letting it become a 500.
+                raise ImportRejected(
+                    "bad_zip",
+                    f"'{entry.info.filename}' cannot be written on this file system.",
+                ) from exc
 
     def close(self) -> None:
         self._archive.close()
@@ -92,11 +115,72 @@ class ValidatedZip:
         self.close()
 
 
+def _check_entry_count(stream: BinaryIO, *, max_files: int) -> None:
+    """Reject an archive whose central directory names far too many entries.
+
+    Read only the end-of-central-directory record (and the ZIP64 record it may
+    point to) to learn the total entry count without parsing the directory. The
+    cap includes directories and skipped names, so it is generous: `2 * max_files`.
+    """
+    total = _central_directory_count(stream)
+    if total is not None and total > 2 * max_files:
+        raise ImportRejected("too_many_files", f"The archive has more than {max_files} files.")
+
+
+def _central_directory_count(stream: BinaryIO) -> int | None:
+    """The total central-directory entry count from the archive tail, or None.
+
+    None means the record could not be read here; `zipfile` then reports the
+    archive as invalid in the usual way.
+    """
+    stream.seek(0, 2)
+    size = stream.tell()
+    window = min(size, _EOCD_SIZE + _MAX_COMMENT)
+    stream.seek(size - window)
+    tail = stream.read(window)
+    stream.seek(0)
+    idx = tail.rfind(_EOCD_SIG)
+    if idx < 0 or window - idx < _EOCD_SIZE:
+        return None
+    eocd = tail[idx : idx + _EOCD_SIZE]
+    total, cd_size = struct.unpack("<HI", eocd[10:16])
+    if total != 0xFFFF and cd_size != 0xFFFFFFFF:
+        # A central directory cannot be smaller than one fixed header per entry;
+        # a smaller one is malformed (and `zipfile` will reject it as such).
+        if cd_size < total * _CD_RECORD_MIN:
+            return None
+        return total
+    return _zip64_count(stream, tail, idx, fallback=total)
+
+
+def _zip64_count(stream: BinaryIO, tail: bytes, eocd_idx: int, *, fallback: int) -> int | None:
+    """The 8-byte entry count from the ZIP64 end-of-central-directory record."""
+    loc = eocd_idx - _Z64_LOCATOR_SIZE
+    if loc < 0 or tail[loc : loc + 4] != _Z64_LOCATOR_SIG:
+        return fallback
+    z64_offset = struct.unpack("<Q", tail[loc + 8 : loc + 16])[0]
+    stream.seek(0, 2)
+    if z64_offset + 40 > stream.tell():
+        return None
+    stream.seek(z64_offset)
+    header = stream.read(56)
+    stream.seek(0)
+    if len(header) < 40 or header[:4] != _Z64_EOCD_SIG:
+        return fallback
+    return struct.unpack("<Q", header[32:40])[0]
+
+
 def _plan(infos: list[zipfile.ZipInfo], *, max_bytes: int, max_files: int) -> list[_Entry]:
     kept: list[_Entry] = []
     total = 0
+    seen = 0
     for info in infos:
         name = info.filename
+        # Every record, directories and skipped names included, counts toward
+        # the work cap; otherwise an archive of nothing but directories slips past.
+        seen += 1
+        if seen > 2 * max_files:
+            raise ImportRejected("too_many_files", f"The archive has more than {max_files} files.")
         if stat.S_ISLNK(info.external_attr >> 16):
             raise ImportRejected("symlink", f"The archive contains a symbolic link: '{name}'.")
         try:
@@ -163,6 +247,19 @@ def _dedupe(entries: list[_Entry]) -> list[_Entry]:
         raise ImportRejected(
             "bad_zip", f"The archive has both a file and a folder named '{clash[0]}'."
         )
+    # On a case-insensitive file system (NTFS, APFS) a file and a folder whose
+    # names differ only in case collide when unpacked, which would otherwise
+    # fail mid-extraction with a 500. Reject it up front on every OS.
+    folder_by_lower = {folder.casefold(): folder for folder in folders}
+    for file_path in by_path:
+        folder = folder_by_lower.get(file_path.casefold())
+        if folder is not None and folder != file_path:
+            first, second = sorted((file_path, folder))
+            raise ImportRejected(
+                "bad_zip",
+                "The archive has a file and a folder whose names differ only in case: "
+                f"'{first}' and '{second}'.",
+            )
     return list(by_path.values())
 
 

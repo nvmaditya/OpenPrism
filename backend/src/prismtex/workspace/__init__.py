@@ -20,6 +20,7 @@ from prismtex.workspace.store import (
     TemplateKind,
     Unset,
     file_kind,
+    remove_stale_temp_files,
 )
 from prismtex.workspace.text import (
     Eol,
@@ -56,5 +57,6 @@ __all__ = [
     "encode_text",
     "file_kind",
     "is_internal",
+    "remove_stale_temp_files",
     "resolve_in",
 ]

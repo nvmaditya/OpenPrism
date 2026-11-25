@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -224,3 +225,39 @@ def test_delete_one_and_many(client: TestClient, pid: str) -> None:
     assert empty.status_code == 422
     too_many = client.post(f"/api/projects/{pid}/files/delete", json={"paths": ["a"] * 1001})
     assert too_many.status_code == 422
+
+
+def test_put_retries_a_sharing_violation_and_returns_200(
+    client: TestClient, pid: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from prismtex.workspace import store as store_module
+
+    calls = {"n": 0}
+    real_replace = store_module.os.replace
+
+    def flaky(src: Any, dst: Any) -> None:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError("sharing violation")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(store_module.os, "replace", flaky)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _s: None)
+    response = client.put(files_url(pid, "main.tex"), json={"content": "ok\n"})
+    assert response.status_code == 200
+    assert calls["n"] == 3
+
+
+def test_put_returns_409_file_busy_when_file_stays_locked(
+    client: TestClient, pid: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from prismtex.workspace import store as store_module
+
+    def always_busy(src: Any, dst: Any) -> None:
+        raise PermissionError("sharing violation")
+
+    monkeypatch.setattr(store_module.os, "replace", always_busy)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _s: None)
+    response = client.put(files_url(pid, "main.tex"), json={"content": "x"})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "file_busy"
