@@ -1,0 +1,50 @@
+Rc files read:
+  NONE
+Latexmk: This is Latexmk, John Collins, 31 Jan. 2024. Version 4.83.
+No existing .aux file, so I'll make a simple one, and require run of *latex.
+Latexmk: applying rule 'pdflatex'...
+Rule 'pdflatex':  Reasons for rerun
+Category 'other':
+  Rerun of 'pdflatex' forced or previously required:
+    Reason or flag: 'Initial setup'
+
+------------
+Run number 1 of rule 'pdflatex'
+------------
+------------
+Running 'pdflatex  -interaction=nonstopmode -file-line-error -synctex=1 -no-shell-escape -recorder -output-directory="/data/build/attack_openout/out"  "main.tex"'
+------------
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex)
+entering extended mode
+(./main.tex
+LaTeX2e <2023-11-01> patch level 1
+L3 programming layer <2024-01-22>
+(/usr/share/texlive/texmf-dist/tex/latex/base/article.cls
+Document Class: article 2023/05/17 v1.4n Standard LaTeX document class
+(/usr/share/texlive/texmf-dist/tex/latex/base/size10.clo)) (/usr/share/texlive/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def) (/data/build/attack_openout/out/main.aux)
+pdflatex: Not writing to /tmp/prismtex-pwned.txt (openout_any = p).
+
+./main.tex:4: I can't write on file `/tmp/prismtex-pwned.txt'.
+l.4 \immediate\openout\x=/tmp/prismtex-pwned.txt
+                                                
+(Press Enter to retry, or Control-D to exit; default file extension is `.tex')
+Please type another output file name
+./main.tex:4: Emergency stop.
+l.4 \immediate\openout\x=/tmp/prismtex-pwned.txt
+                                                
+./main.tex:4:  ==> Fatal error occurred, no output PDF file produced!
+Transcript written on /data/build/attack_openout/out/main.log.
+Latexmk: Sometimes, the -f option can be used to get latexmk
+  to try to force complete processing.
+  But normally, you will need to correct the file(s) that caused the
+  error, and then rerun latexmk.
+  In some cases, it is best to clean out generated files before rerunning
+  latexmk after you've corrected the files.
+Latexmk: Getting log file '/data/build/attack_openout/out/main.log'
+Latexmk: Examining '/data/build/attack_openout/out/main.fls'
+Latexmk: Examining '/data/build/attack_openout/out/main.log'
+Latexmk: Errors, so I did not complete making targets
+Collected error summary (may duplicate other messages):
+  pdflatex: Command for 'pdflatex' gave return code 1
+      Refer to '/data/build/attack_openout/out/main.log' and/or above output for details
+

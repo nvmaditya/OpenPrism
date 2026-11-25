@@ -1,4 +1,6 @@
-# OpenPrism revamp: design
+# PrismTeX revamp: design
+
+> Renamed to PrismTeX on 2026-11-25: read `openprism` as `prismtex` and `OPENPRISM_` as `PRISMTEX_`.
 
 - **Date:** 2026-11-24
 - **Status:** Proposed
@@ -99,7 +101,7 @@ Success looks like this:
 
 ### 3.1 Positioning
 
-OpenPrism is aimed at researchers who want AI help with unpublished LaTeX work without handing that work to a vendor's cloud. It is a self-hosted LaTeX workspace whose AI shows its work:
+PrismTeX is aimed at researchers who want AI help with unpublished LaTeX work without handing that work to a vendor's cloud. It is a self-hosted LaTeX workspace whose AI shows its work:
 
 - every change is a diff the user reviews;
 - every diff is compile-checked against the paper's existing state;
@@ -160,7 +162,7 @@ These would make the revamp a failure even if everything else works:
 | D9 | Default local model | `qwen3:4b-instruct-2507-q4_K_M` with a 16,384-token context, not `llama3.1:8b` | Live runs: qwen3 4B passes most guided tasks; llama3.1 8B fails most even with the fixes, and Meta says the 8B can't hold a conversation with tools. |
 | D10 | Default provider | None hard-coded. First-run setup detects a local Ollama and offers Anthropic or any OpenAI-compatible endpoint (presets for OpenAI and OpenRouter; any other service by base URL). | A dead hosted default is how the agent broke. |
 | D11 | Removed features | The skills subsystem (not used by the agent, with content unrelated to LaTeX writing), PNG page previews (replaced by pdf.js) and `POST /tools/run` (code execution by design) | Security, focus and dead code |
-| D12 | Backend package | Move `backend/app` to `backend/src/openprism` (or the new slug) with a console script `openprism serve` | A package named `app` can't be published or installed cleanly |
+| D12 | Backend package | Move `backend/app` to `backend/src/prismtex` with a console script `prismtex serve` | A package named `app` can't be published or installed cleanly |
 | D13 | Network exposure | The UI calls the API same-origin through Next.js rewrites. The backend binds 127.0.0.1 and checks Host and Origin. An optional access token covers LAN and Docker use. | Closes cross-site access and DNS rebinding without adding auth for the local case |
 | D14 | Releases | SemVer 0.x and Conventional Commits; `git-cliff` run locally; signed annotated tags; `gh release create` by a maintainer; images built by CI on tag push (from v0.4.0) | Simple, verifiable releases with no release-PR churn |
 | D15 | Docs | A `docs/` folder in the repository; no docs site until it is needed | Smallest tooling |
@@ -169,10 +171,12 @@ These would make the revamp a failure even if everything else works:
 
 ### 4.2 Open decisions for the maintainer (with recommendations)
 
+Q1 and Q2 were decided on 2026-11-25, as marked below. The Phase 0 spec (`docs/plans/2026-11-25-phase-0-clean-slate.md`) also takes Q8, Q9 and Q10 as recommended.
+
 | # | Question | Options | Recommendation |
 |---|----------|---------|----------------|
-| Q1 | Name | Rename before launch, or keep "OpenPrism" with a non-affiliation note | **Rename.** Candidates with no LaTeX projects on GitHub (checked 2026-11-24): **Stet** (proofreader's mark for "let it stand", a fit for review-first; free on npm), **Colophon**, **Refract** (a nod to the current name). All three are taken on PyPI, which matters little for a Docker-first app. Trademark clearance is still needed. |
-| Q2 | License | Apache-2.0, AGPL-3.0 or MIT | **Apache-2.0** (permissive, explicit patent grant, routine for universities). Pick AGPL-3.0 only if stopping closed hosted forks matters more than adoption. |
+| Q1 | Name | Rename before launch, or keep "OpenPrism" with a non-affiliation note | **Decided: PrismTeX.** The recommendation was to **rename.** Candidates with no LaTeX projects on GitHub (checked 2026-11-24): **Stet** (proofreader's mark for "let it stand", a fit for review-first; free on npm), **Colophon**, **Refract** (a nod to the current name). All three are taken on PyPI, which matters little for a Docker-first app. Trademark clearance is still needed. |
+| Q2 | License | Apache-2.0, AGPL-3.0 or MIT | **Decided: Apache-2.0**, open to change in review. The recommendation was **Apache-2.0** (permissive, explicit patent grant, routine for universities). Pick AGPL-3.0 only if stopping closed hosted forks matters more than adoption. |
 | Q5 | Claude acceptance run | Model and cap | **Haiku 5.5** on the full eval suite (about $0.10–0.35) plus **Sonnet 5.5** on the hard subset (about $1–2), with a hard stop at $9.50 of the $10 cap. Opus 5.5 is optional, for 1 trial on the hard subset. |
 | Q6 | Prism export import | Ship "Import an OpenAI Prism export" before 2027-01-01, or skip | **Ship it** in Phase 1. It is small (root detection, top-folder strip, skip `conversations/`). Mention Prism only nominatively, with a non-affiliation line. |
 | Q7 | Save and compile defaults | Autosave on or off; compile on save on or off | Autosave on (debounced); compile on save off; Ctrl/Cmd+Enter compiles |
@@ -230,26 +234,26 @@ flowchart LR
 
 ### 6.2 Backend modules
 
-Each module is deep: a small interface hiding most of the behaviour, and tested through that interface. Paths assume the slug `openprism`. Signatures are abbreviated.
+Each module is deep: a small interface hiding most of the behaviour, and tested through that interface. Paths assume the slug `prismtex`. Signatures are abbreviated.
 
 | Module | Interface (summary) | Hides |
 |--------|---------------------|-------|
-| `openprism.workspace` | `ProjectStore(DataLayout)`: `create`, `list`, `get`, `update`, `delete`, `import_zip`; `read(project_id, path) -> FileVersion`, `write(project_id, path, text, base_version)`, `write_new(project_id, path, text)`; the file tree and the outline | Path sandbox (including Windows aliases, reserved names and ADS), line-ending preservation, content-hash versions, ZIP limits and root detection, keeping project state out of reach |
-| `openprism.compile` | `Compiler.compile(project_id, *, root_file, engine) -> CompileResult` (one compile per project at a time) and `Compiler.compile_dir(src_dir, ...)` for scratch trees; `CompileResult.status` (`ok`, `failed`, `timeout`, `unavailable`) with structured `Diagnostic`s; SyncTeX `forward` and `inverse` (Phase 2) | Hardened argv and env (`-no-shell-escape`, `-norc`, paranoid file access, root-file validation), timeouts with process-tree kill, output caps, UTF-8 decoding, log unwrapping and parsing, baseline cache by content hash |
-| `openprism.agent` | Turn engine: start a turn, stream its events, cancel it; accept or reject proposals (§6.4) | Providers, profiles, context budgeting, tools, staging overlay, differential verification, repair rounds, budgets, threads, traces |
-| `openprism.history` | `checkpoint(project_id, *, reason, message, trailers) -> Checkpoint`, `list`, `diff`, `restore` | git shadow repository mechanics, excludes, locking |
-| `openprism.citations` (Phase 3) | `check_entry(entry, sources) -> CitationCheck`; `audit_project(project_id, store, sources) -> CitationAudit` | BibTeX parsing; Crossref, arXiv, OpenAlex and Semantic Scholar clients; fuzzy matching; caching; rate limits |
-| `openprism.api` | FastAPI routers | Dependency injection, one error envelope (`{"detail": {"code", "message", ...}}`), versioned event stream |
+| `prismtex.workspace` | `ProjectStore(DataLayout)`: `create`, `list`, `get`, `update`, `delete`, `import_zip`; `read(project_id, path) -> FileVersion`, `write(project_id, path, text, base_version)`, `write_new(project_id, path, text)`; the file tree and the outline | Path sandbox (including Windows aliases, reserved names and ADS), line-ending preservation, content-hash versions, ZIP limits and root detection, keeping project state out of reach |
+| `prismtex.compile` | `Compiler.compile(project_id, *, root_file, engine) -> CompileResult` (one compile per project at a time) and `Compiler.compile_dir(src_dir, ...)` for scratch trees; `CompileResult.status` (`ok`, `failed`, `timeout`, `unavailable`) with structured `Diagnostic`s; SyncTeX `forward` and `inverse` (Phase 2) | Hardened argv and env (`-no-shell-escape`, `-norc`, paranoid file access, root-file validation), timeouts with process-tree kill, output caps, UTF-8 decoding, log unwrapping and parsing, baseline cache by content hash |
+| `prismtex.agent` | Turn engine: start a turn, stream its events, cancel it; accept or reject proposals (§6.4) | Providers, profiles, context budgeting, tools, staging overlay, differential verification, repair rounds, budgets, threads, traces |
+| `prismtex.history` | `checkpoint(project_id, *, reason, message, trailers) -> Checkpoint`, `list`, `diff`, `restore` | git shadow repository mechanics, excludes, locking |
+| `prismtex.citations` (Phase 3) | `check_entry(entry, sources) -> CitationCheck`; `audit_project(project_id, store, sources) -> CitationAudit` | BibTeX parsing; Crossref, arXiv, OpenAlex and Semantic Scholar clients; fuzzy matching; caching; rate limits |
+| `prismtex.api` | FastAPI routers | Dependency injection, one error envelope (`{"detail": {"code", "message", ...}}`), versioned event stream |
 
 ### 6.3 Data layout
 
 ```
-<data_dir>/                       # default ./data in development, /data in Docker, OPENPRISM_DATA_DIR overrides
+<data_dir>/                       # default ./data in development, /data in Docker, PRISMTEX_DATA_DIR overrides
   VERSION                         # data-layout version for startup migrations (Phase 4)
   settings.json                   # non-secret preferences only (§6.7)
   projects/<project_id>/          # the user's files only (what export and import see)
   state/
-    ledger.jsonl                  # paid-provider cost ledger, shared by the app and eval runs (OPENPRISM_LEDGER_PATH overrides)
+    ledger.jsonl                  # paid-provider cost ledger, shared by the app and eval runs (PRISMTEX_LEDGER_PATH overrides)
   state/<project_id>/
     project.json                  # name, root file, engine, settings, created_at
     active_turn                   # marker while a turn runs; an interrupted turn is closed at startup
@@ -341,7 +345,7 @@ Threats and the controls against each:
 
 ### 6.7 Configuration
 
-Server configuration comes from variables with the `OPENPRISM_` prefix, read from the process environment or a `.env` file, plus the standard provider key names: `ANTHROPIC_API_KEY` (with `CLAUDE_API_KEY` accepted as an alias), `OPENAI_API_KEY` and `OPENROUTER_API_KEY`. Every server variable with that prefix is a field of one settings model, and `docs/configuration.md` lists them all (test-only variables are listed separately). Provider endpoints and keys come only from the environment or `.env`.
+Server configuration comes from variables with the `PRISMTEX_` prefix, read from the process environment or a `.env` file, plus the standard provider key names: `ANTHROPIC_API_KEY` (with `CLAUDE_API_KEY` accepted as an alias), `OPENAI_API_KEY` and `OPENROUTER_API_KEY`. Every server variable with that prefix is a field of one settings model, and `docs/configuration.md` lists them all (test-only variables are listed separately). Provider endpoints and keys come only from the environment or `.env`.
 
 `<data_dir>/settings.json` holds only non-secret preferences that the UI edits: the default model, the default profile, autosave and the citation-lookup toggle. A preference saved there overrides the environment's default, and a project's own settings in `project.json` (profile override, auto-accept) override both. Changing a preference needs no restart.
 
@@ -412,7 +416,7 @@ Development testing uses local Ollama models only. A paid provider (Claude) is u
 
 - **The budget guard.**
   - It reserves the worst case before each call (input estimate × price + `max_tokens` × output price) and settles from `usage` afterwards.
-  - Spend is written to one persisted ledger that the app and the eval runs share (`OPENPRISM_LEDGER_PATH`, default `<data_dir>/state/ledger.jsonl`), and it sums across runs. The Anthropic adapter refuses a paid call when no ledger is configured.
+  - Spend is written to one persisted ledger that the app and the eval runs share (`PRISMTEX_LEDGER_PATH`, default `<data_dir>/state/ledger.jsonl`), and it sums across runs. The Anthropic adapter refuses a paid call when no ledger is configured.
   - It stops at **$9.50 cumulative**.
 - **Contract tests cost nothing.** The Anthropic adapter's fixtures are built from the documented response shapes.
 - **External backstops:**

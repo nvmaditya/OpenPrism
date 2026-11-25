@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in PrismTeX does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. For a security problem, do not use this form: follow [SECURITY.md](https://github.com/nvmaditya/OpenPrism/blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest steps that show the problem. If it involves a project, attach a small ZIP of it if you can share it.
+      placeholder: |
+        1. Create an example paper
+        2. Change ...
+        3. Click Compile
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and diagnostics
+      description: The compile log or diagnostics, the server output (logs/backend.log when you use start.sh), or the browser console. Remove anything private.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: PrismTeX version or commit
+      placeholder: e.g. main at 1a2b3c4
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: tex
+    attributes:
+      label: TeX distribution
+      placeholder: e.g. TeX Live 2025, MiKTeX 25.12
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: e.g. Firefox 140
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues and found no report of this.
+          required: true

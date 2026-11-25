@@ -1,17 +1,19 @@
-# OpenPrism agent: design
+# PrismTeX agent: design
+
+> Renamed to PrismTeX on 2026-11-25: read `openprism` as `prismtex` and `OPENPRISM_` as `PRISMTEX_`.
 
 - **Date:** 2026-11-24
 - **Status:** Proposed.
 - **Audience:** maintainers and contributors, and anyone implementing Phase 1 of the revamp.
 - **Companion to:** `docs/design/2026-11-24-revamp-design.md` (decisions D1 to D17 and D2b, data layout §6.3, security §6.6, configuration §6.7, quality §7). Terms follow `CONTEXT.md`, and ADRs 0001 to 0004 apply unchanged. A *content version* is the SHA-256 hex digest (64 digits) of a file's bytes on disk (its ETag); it is not a Checkpoint.
 - **How it was made:** four candidate designs, each written under a different constraint, were compared for small-model reliability, architecture and delivery risk. This design keeps the engine and invariants of the minimal-interface candidate, takes its guided Profile from the candidate optimized for the qwen3 4B edit, and adopts specific parts of the other two.
-- **Starting point (Phase 0):** the package `backend/src/openprism`, with the composition root `create_app(settings)` in `openprism.main`; `Settings` (pydantic-settings, `OPENPRISM_*` from the environment and `.env`); `DataLayout` and `ProjectStore(layout)`, whose `read(project_id, path)` returns `FileVersion(text, version, eol)` (LF text, a content version, `eol` `"lf"` or `"crlf"`) and whose `write(project_id, path, text, base_version)` raises `VersionConflict`; the data layout of revamp §6.3; `Compiler.compile(project_id, *, root_file, engine)` and `Compiler.compile_dir(...)` returning a `CompileResult` with structured `Diagnostic(file, line, severity, kind, message)`; one error envelope, `{"detail": {"code", "message", ...}}`; Host and Origin middleware; the old agent removed.
+- **Starting point (Phase 0):** the package `backend/src/prismtex`, with the composition root `create_app(settings)` in `prismtex.main`; `Settings` (pydantic-settings, `PRISMTEX_*` from the environment and `.env`); `DataLayout` and `ProjectStore(layout)`, whose `read(project_id, path)` returns `FileVersion(text, version, eol)` (LF text, a content version, `eol` `"lf"` or `"crlf"`) and whose `write(project_id, path, text, base_version)` raises `VersionConflict`; the data layout of revamp §6.3; `Compiler.compile(project_id, *, root_file, engine)` and `Compiler.compile_dir(...)` returning a `CompileResult` with structured `Diagnostic(file, line, severity, kind, message)`; one error envelope, `{"detail": {"code", "message", ...}}`; Host and Origin middleware; the old agent removed.
 
 ---
 
 ## 1. Summary
 
-The agent is one deep module, `openprism.agent`. The API layer and the eval harness reach it through three entry points:
+The agent is one deep module, `prismtex.agent`. The API layer and the eval harness reach it through three entry points:
 
 ```python
 class Agent:
@@ -58,9 +60,9 @@ Two shallow side doors complete the surface: `agent.reader` reads Project state 
 
 Records are frozen dataclasses, written here as `Name(field: type = default, ...)`. Protocols and classes with behaviour are written out.
 
-### 2.1 Public surface: `openprism.agent`
+### 2.1 Public surface: `prismtex.agent`
 
-`openprism/agent/__init__.py` re-exports exactly these names. The API layer and the eval harness import nothing else, except `openprism.agent.testing` and `openprism.agent.providers.fake`.
+`prismtex/agent/__init__.py` re-exports exactly these names. The API layer and the eval harness import nothing else, except `prismtex.agent.testing` and `prismtex.agent.providers.fake`.
 
 ```python
 ProfileName = Literal["agentic", "guided"]
@@ -131,7 +133,7 @@ class ProjectBusy(AgentError): ...      # detail["active_turn_id"]
 
 ### 2.2 Modules behind the seam
 
-All paths are under `backend/src/openprism/agent/`. Data files live in `data/` (`commands.txt`, the known LaTeX commands; `packages.json`, macro or environment to package), and prompt text in `profiles/prompts/*.md`.
+All paths are under `backend/src/prismtex/agent/`. Data files live in `data/` (`commands.txt`, the known LaTeX commands; `packages.json`, macro or environment to package), and prompt text in `profiles/prompts/*.md`.
 
 | Module | Interface | What the implementation hides |
 |---|---|---|
@@ -161,7 +163,7 @@ AgentConfig(data_dir: Path, limits: Mapping[ProfileName, Limits] = DEFAULT_LIMIT
             max_usd_per_turn: float = 1.00, ledger_path: Path | None = None,
             cost_stop_usd: float | None = None, strict_history: bool = False,
             trace_prompts: bool = False, turn_retention: int = 200, shutdown_grace_s: float = 15.0)
-    # ledger_path: OPENPRISM_LEDGER_PATH, default <data_dir>/state/ledger.jsonl; one ledger for app and
+    # ledger_path: PRISMTEX_LEDGER_PATH, default <data_dir>/state/ledger.jsonl; one ledger for app and
     # eval use (§11.8); cost_stop_usd: cumulative stop (maintainer and eval runs: 9.50)
     # strict_history: Anthropic fails any history edit (evals, CI); AgentConfig.from_settings(settings)
 AgentDeps(projects: ProjectStore, compiler: TreeCompiler, history: History, models: ModelResolver)
@@ -575,7 +577,7 @@ ToolResultBlock(tool_use_id: str, content: str, is_error: bool = False)
 These belong to other modules (revamp §6.2). Phase 0 provides `ProjectStore` (`read`, `write`, `update`, `import_zip`), `content_version`, `encode_text`, `VersionConflict`, the path policy and the `Compiler`; Task T1 adds the workspace pieces below that Phase 0 does not provide; T3, T11 and T12 build the rest.
 
 ```python
-class ProjectStore:                      # openprism.workspace.store; ProjectStore(layout: DataLayout)
+class ProjectStore:                      # prismtex.workspace.store; ProjectStore(layout: DataLayout)
     def get(self, project_id: str) -> ProjectInfo: ...
     def list_files(self, project_id: str) -> list[FileEntry]: ...     # FileEntry(path, size, kind: "source" | "asset")
     def read(self, project_id: str, path: str) -> FileVersion: ...    # FileVersion(text: LF, version, eol: Eol)
@@ -595,7 +597,7 @@ def check_source_path(path: str, *, for_write: bool) -> str: ...
 
 SourceTree(project_id: str, root_file: str, engine: Engine, overlay: Mapping[str, str | None],
            eols: Mapping[str, Eol], inputs: Mapping[str, str], digest: str)
-    # openprism.compile.tree; overlay: path -> LF text (None: deleted) over the Project folder;
+    # prismtex.compile.tree; overlay: path -> LF text (None: deleted) over the Project folder;
     # inputs: each Source path's content version (of its effective bytes) at capture;
     # digest: sha256 over the Root file, the engine, the inputs and each Asset's size and mtime;
     # the compile cache key is sha256(toolchain, digest)
@@ -603,7 +605,7 @@ class TreeCompiler(Protocol):            # ScratchTreeCompiler (TeX) and FakeTre
     async def compile(self, tree: SourceTree, *, purpose: Literal["user", "baseline", "proposal"],
                       cancel: CancelToken, timeout_s: float = 120.0) -> CompileResult: ...
 
-class History(Protocol):                 # openprism.history: GitShadowHistory and NullHistory
+class History(Protocol):                 # prismtex.history: GitShadowHistory and NullHistory
     async def checkpoint(self, project_id: str, *,
                          reason: Literal["save", "accept", "auto_accept", "restore", "import"],
                          message: str, trailers: Mapping[str, str] | None = None) -> Checkpoint | None: ...
@@ -617,8 +619,8 @@ def build_outline(read: Callable[[str], str], paths: Iterable[str], root_file: s
 ```
 
 - **Compile results.** Scratch trees compile through Phase 0's `Compiler.compile_dir(src_dir, *, project_id, root_file, engine, out_dir, log_path)`, which takes no per-Project lock; `Compiler.compile` calls it under that lock for the user's own compiles. The agent uses the `CompileResult.status` property (`ok`, `failed`, `timeout`, `unavailable`), `diagnostics`, `pdf_path` and `duration_ms`. T11 sets the final Diagnostic kind set of the log parser (§7.3); the verifier relies on `undefined_citation`, `undefined_reference` and `fatal` (emergency stop, fatal error, job aborted).
-- **Cancellation.** `CancelToken` (`openprism/cancel.py`, T1) wraps an `asyncio.Event` with `set()`, `is_set()` and `raise_if_set()`; compiles and Provider streams take it.
-- **Outline** (`openprism.outline`, T3) carries headings with `path`, `line`, `end_line`, `level`, `title` and `label`; the `\input` graph from the Root file; labels with their reference counts; environment spans; bibliography files and keys; cited keys; loaded packages; the document class; and the Source files the Root file never includes. Its methods `section_at(path, line)`, `paragraph_at(path, line)`, `find_heading(query)` and `order(path, line)` (position in document order) serve the locator, the context and the verifier.
+- **Cancellation.** `CancelToken` (`prismtex/cancel.py`, T1) wraps an `asyncio.Event` with `set()`, `is_set()` and `raise_if_set()`; compiles and Provider streams take it.
+- **Outline** (`prismtex.outline`, T3) carries headings with `path`, `line`, `end_line`, `level`, `title` and `label`; the `\input` graph from the Root file; labels with their reference counts; environment spans; bibliography files and keys; cited keys; loaded packages; the document class; and the Source files the Root file never includes. Its methods `section_at(path, line)`, `paragraph_at(path, line)`, `find_heading(query)` and `order(path, line)` (position in document order) serve the locator, the context and the verifier.
 - **History** runs `git --git-dir=<data_dir>/history/<project_id>.git` (`DataLayout.history_git(project_id)`) `--work-tree=<project folder>` with `GIT_CONFIG_NOSYSTEM=1`, an empty global configuration, `core.autocrlf=false`, a fixed author identity and no hooks; `checkpoint` stages with `git add -A` under an exclude file that keeps compile outputs and Assets over 20 MiB out. `RestoreResult(checkpoint_id: str, files: tuple[FileState, ...])`.
 
 ---
@@ -628,7 +630,7 @@ def build_outline(read: Callable[[str], str], paths: Iterable[str], root_file: s
 ### 3.1 Composition root and routes
 
 ```python
-# openprism/main.py: Phase 0's create_app(settings), extended with keyword-only test seams
+# prismtex/main.py: Phase 0's create_app(settings), extended with keyword-only test seams
 def create_app(settings: Settings | None = None, *, models: ModelResolver | None = None,
                compiler: TreeCompiler | None = None) -> FastAPI:
     settings = settings or Settings()
@@ -647,7 +649,7 @@ def create_app(settings: Settings | None = None, *, models: ModelResolver | None
         app.include_router(router)
     return app
 
-# openprism/api/agent.py
+# prismtex/api/agent.py
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["agent"])
 
 @router.post("/turns", status_code=202)
@@ -934,7 +936,7 @@ An ambiguous match says: "old_str matches 3 places (lines 12, 40, 77). Include n
 | Tool calls per Turn | none (no tools) | 60 |
 | Wall time per Turn (model, tools, compiles) | 180 s | 600 s |
 | Tokens per Turn (input plus output) | 150,000 | 800,000 |
-| USD per Turn (paid Providers) | not applicable | $1.00 (`OPENPRISM_MAX_USD_PER_TURN`) |
+| USD per Turn (paid Providers) | not applicable | $1.00 (`PRISMTEX_MAX_USD_PER_TURN`) |
 | Output per Step | rewrite: min(4,096, ceil(1.5 × Region) + 256); answer 1,024; router 256 | catalog `max_output` (Claude 16,000; Ollama 1,024; OpenAI-compatible 8,192) |
 | HTTP per Step | connect 5 s; 120 s between chunks; 180 s per Step | connect 10 s; 120 s between events; 300 s per Step |
 | Region | 2,500 estimated tokens or 120 lines; at most 4 Regions | not applicable |
@@ -1335,7 +1337,7 @@ data: {"v":1,"seq":7,"turn_id":"t_20261124T231004_9f3a","at":"2026-11-24T23:10:0
 
 Phase 0's `GET /api/health` is liveness only (exempt from the access token, used by `start.sh` and container health checks); `GET /api/agent/health` reports the agent's configuration. `GET /api/agent/health` without `probe` and `GET /api/agent/models` make no network request at all; they report configuration. `probe=true` contacts only the configured Ollama URL (`/api/tags`, `/api/show`), never a hosted or paid endpoint. The server runs it once at startup so `resolve` knows which Ollama models are pulled; otherwise only an explicit user action (the health view's "Check again") runs it.
 
-Accept-all, reject-all and per-Hunk decisions are all one `resolve` call: `{"accept": "all"}`, `{"reject": "all"}`, or `{"accept": ["h1a2..."], "reject": ["h9f8..."]}`. The History routes belong to `openprism.history`; a restore takes a `save` Checkpoint of the current state first, writes through `ProjectStore.write`, then takes a `restore` Checkpoint, so nothing is lost. It is allowed during a Turn, because it is the user's write, not the agent's.
+Accept-all, reject-all and per-Hunk decisions are all one `resolve` call: `{"accept": "all"}`, `{"reject": "all"}`, or `{"accept": ["h1a2..."], "reject": ["h9f8..."]}`. The History routes belong to `prismtex.history`; a restore takes a `save` Checkpoint of the current state first, writes through `ProjectStore.write`, then takes a `restore` Checkpoint, so nothing is lost. It is allowed during a Turn, because it is the user's write, not the agent's.
 
 ### 10.3 Shapes
 
@@ -1409,32 +1411,32 @@ client.messages.stream(
 - **Stop reasons:** `end_turn` and `stop_sequence` map to `end`; `tool_use`; `max_tokens`; `refusal`, with `stop_details.category` carried in `refusal_category`. `pause_turn` is not expected, because no server tools are used; if seen, it maps to `end` with a Trace note.
 - **History check.** With `strict_history`, requests go through `client.beta.messages.stream` with the beta `thinking-binding-controls-2026-08-01` and `thinking.block_binding.prefix_mismatch_behavior = "error"`, so any edit of earlier turns fails loudly. Without it, a 400 whose message says a thinking block "is bound to a different conversation" is handled once: the adapter strips every thinking block from the history and retries, emits `notice(history_reset)`, and the next Turn starts a new segment. A second failure is `history_rejected`.
 - **Usage to cost:** prompt tokens = `input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens`; cost = `input_tokens` × input + `cache_creation_input_tokens` × cache write + `cache_read_input_tokens` × cache read + `output_tokens` × output. Usage reported per model in `usage.iterations` is priced by its served model.
-- **Refusal fallback.** Server-side `fallbacks` is off by default. `OPENPRISM_ANTHROPIC_FALLBACKS=default` enables it (beta `server-side-fallback-2026-07-01`, `fallbacks: "default"`) for Opus 5.5 and Sonnet 5.5; reservations are then priced at the dearer of the model and its fallback (Opus 5 at $5 / $25 for Opus 5.5; Sonnet 5 for Sonnet 5.5). Haiku 5.5 has no server-side fallback.
+- **Refusal fallback.** Server-side `fallbacks` is off by default. `PRISMTEX_ANTHROPIC_FALLBACKS=default` enables it (beta `server-side-fallback-2026-07-01`, `fallbacks: "default"`) for Opus 5.5 and Sonnet 5.5; reservations are then priced at the dearer of the model and its fallback (Opus 5 at $5 / $25 for Opus 5.5; Sonnet 5 for Sonnet 5.5). Haiku 5.5 has no server-side fallback.
 - **Counting:** `messages.count_tokens` (free) when an estimate is within 20% of the limit.
 - **Errors:** authentication and permission errors map to `auth`; not found to `not_found`; rate limit to `rate_limited` with `retry-after`; 5xx and overloaded to `overloaded`; connection to `unreachable`; timeout to `timeout`; a 400 saying the prompt is too long to `context_overflow`; other 400s to `bad_request`.
 - **Keys:** `ANTHROPIC_API_KEY`, with `CLAUDE_API_KEY` accepted as an alias, read through `Settings` (§11.7); the SDK's default base URL only.
-- **Ledger required.** The adapter is constructed only with a ledger path; without one, `ProviderRegistry.resolve` refuses every Anthropic model with `model_unavailable` naming `OPENPRISM_LEDGER_PATH`, so no paid call can run unmetered (§11.8).
+- **Ledger required.** The adapter is constructed only with a ledger path; without one, `ProviderRegistry.resolve` refuses every Anthropic model with `model_unavailable` naming `PRISMTEX_LEDGER_PATH`, so no paid call can run unmetered (§11.8).
 
 ### 11.3 OpenAI-compatible (`openai_compat.py`, SDK 2.53)
 
-- **Request.** `AsyncOpenAI(base_url=<the preset's base URL>, api_key=<OPENPRISM_OPENAI_API_KEY>, http_client=...)` and `chat.completions.create(stream=True, stream_options={"include_usage": True}, ...)`, with `max_completion_tokens` or `max_tokens` per preset, `parallel_tool_calls=False` where the preset supports it, and no sampling parameters unless the preset lists them.
+- **Request.** `AsyncOpenAI(base_url=<the preset's base URL>, api_key=<PRISMTEX_OPENAI_API_KEY>, http_client=...)` and `chat.completions.create(stream=True, stream_options={"include_usage": True}, ...)`, with `max_completion_tokens` or `max_tokens` per preset, `parallel_tool_calls=False` where the preset supports it, and no sampling parameters unless the preset lists them.
 - **Tool calls.** Streamed `tool_calls[i].function.arguments` fragments are assembled by `index`; the id and name come from the first fragment. `finish_reason` maps `stop` to `end`, `tool_calls` to `tool_use`, `length` to `max_tokens` and `content_filter` to `refusal`. Usage comes from the final chunk, with `prompt_tokens_details.cached_tokens` as cache reads.
 - **Presets:**
 
-One OpenAI-compatible endpoint is configured at a time: `OPENPRISM_OPENAI_PRESET` picks the preset, `OPENPRISM_OPENAI_MODEL` the model, and `OPENPRISM_OPENAI_API_KEY` is its key.
+One OpenAI-compatible endpoint is configured at a time: `PRISMTEX_OPENAI_PRESET` picks the preset, `PRISMTEX_OPENAI_MODEL` the model, and `PRISMTEX_OPENAI_API_KEY` is its key.
 
 | Preset | Base URL | Key | Paid | Notes |
 |---|---|---|---|---|
 | `openai` | `https://api.openai.com/v1` | required | yes | `max_completion_tokens` |
 | `openrouter` | `https://openrouter.ai/api/v1` | required | yes | |
-| `vllm` | `OPENPRISM_OPENAI_BASE_URL` (required) | optional | no | also serves any other OpenAI-compatible endpoint; set `OPENPRISM_OPENAI_PRICE` to meter a paid one |
-| `lmstudio` | `http://127.0.0.1:1234/v1`, or `OPENPRISM_OPENAI_BASE_URL` | optional | no | quirk `recover_text_tool_calls` |
+| `vllm` | `PRISMTEX_OPENAI_BASE_URL` (required) | optional | no | also serves any other OpenAI-compatible endpoint; set `PRISMTEX_OPENAI_PRICE` to meter a paid one |
+| `lmstudio` | `http://127.0.0.1:1234/v1`, or `PRISMTEX_OPENAI_BASE_URL` | optional | no | quirk `recover_text_tool_calls` |
 
 The key is sent only to the configured preset's base URL. Provider variables meant for other tools, such as `OPENAI_API_KEY`, are never read, so a key cannot reach an endpoint it was not set for. `docs/configuration.md` shows how to point the `vllm` preset at any OpenAI-compatible endpoint.
 
 ### 11.4 Ollama native (`ollama.py`, httpx)
 
-- **Request.** `POST {OPENPRISM_OLLAMA_URL}/api/chat` with NDJSON streaming:
+- **Request.** `POST {PRISMTEX_OLLAMA_URL}/api/chat` with NDJSON streaming:
 
 ```json
 {"model": "qwen3:4b-instruct-2507-q4_K_M", "stream": true, "keep_alive": "30m",
@@ -1445,7 +1447,7 @@ The key is sent only to the configured preset's base URL. Provider variables mea
   `tools` is sent only for agentic Steps and `format` only for router Steps. `num_ctx` is pinned per model from the catalog and never varies between requests, because a change reloads the model; `/v1` is never used, because it ignores `num_ctx`. The sampling values come from the Qwen model card; `seed` is set for eval runs.
 - **Responses.** Tool calls come from `message.tool_calls`, with arguments re-serialized canonically into `raw_args`. `done_reason: "length"` maps to `max_tokens`. Usage is `prompt_eval_count` and `eval_count`, priced at zero.
 - **Truncation check.** The client-side budget is the guarantee (I8). As a backstop, a response whose `prompt_eval_count + eval_count` reaches `num_ctx - 32` fails the Step with `context_overflow`, because the server may have shifted context. A low `prompt_eval_count` is not an error: Ollama does not count a reused KV prefix.
-- **Errors:** connection refused maps to `unreachable` ("Start Ollama, or set OPENPRISM_OLLAMA_URL"); 404 to `not_found` ("Run: ollama pull <model>"); a 400 about the context size to `context_overflow`.
+- **Errors:** connection refused maps to `unreachable` ("Start Ollama, or set PRISMTEX_OLLAMA_URL"); 404 to `not_found` ("Run: ollama pull <model>"); a 400 about the context size to `context_overflow`.
 - **Unknown models:** native tool support is read from `/api/show` capabilities; the window defaults to 8,192 tokens.
 
 ### 11.5 Fake, recording and replay (`fake.py`)
@@ -1454,7 +1456,7 @@ The key is sent only to the configured preset's base URL. Provider variables mea
 - **`RecordingModel(inner, path)`** writes each request's hash and its event stream as JSONL during live eval runs.
 - **`ReplayModel(path, strict=True)`** serves them back in CI; a request whose hash (system, tools, messages) differs fails with a diff, so prompt drift shows up as a failing test.
 - **`ReplayModels(path)`** and **`FakeResolver(models)`** are `ModelResolver`s that serve a cassette, or a fixed `ModelPort` (one, or one per ref), to every Turn, for evals and tests; **`RecordingModels(inner)`** wraps a resolver and records one cassette per run.
-- **`fake:scripted`** is a model ref enabled only when `OPENPRISM_FAKE_SCRIPT` names a script file, for the end-to-end lane.
+- **`fake:scripted`** is a model ref enabled only when `PRISMTEX_FAKE_SCRIPT` names a script file, for the end-to-end lane.
 
 ### 11.6 Capabilities and default presets
 
@@ -1466,13 +1468,13 @@ The key is sent only to the configured preset's base URL. Provider variables mea
 | `anthropic:claude-haiku-5-5` | 1,000,000 | 100,000 | 16,000 | yes | transcript | agentic | never | medium | 0.10 / 0.50 |
 | `anthropic:claude-sonnet-5-5` | 1,000,000 | 100,000 | 16,000 | yes | transcript | agentic | never | medium | 2.00 / 10.00 |
 | `anthropic:claude-opus-5-5` | 1,000,000 | 100,000 | 16,000 | yes | transcript | agentic | never | medium | 4.00 / 20.00 |
-| `<openai-compatible preset>:<model>` | catalog, else `OPENPRISM_OPENAI_CONTEXT` (32,768) | from the window | 8,192 | per preset | records | agentic with native tools and at least 32,768 tokens, otherwise guided | per preset | none | catalog, else `OPENPRISM_OPENAI_PRICE` |
+| `<openai-compatible preset>:<model>` | catalog, else `PRISMTEX_OPENAI_CONTEXT` (32,768) | from the window | 8,192 | per preset | records | agentic with native tools and at least 32,768 tokens, otherwise guided | per preset | none | catalog, else `PRISMTEX_OPENAI_PRICE` |
 
 Anthropic cache prices (USD per MTok, 5-minute writes / reads), as of 2026-11-24: Haiku 5.5 0.125 / 0.01 (prompts up to 100K tokens; above that every rate is five times higher, which the input cap avoids); Sonnet 5.5 2.50 / 0.10; Opus 5.5 5.00 / 0.20. Prices live in `providers/catalog.py` with their as-of date.
 
 The guided default for qwen3 4B follows the live evidence: with a fixed harness the model passed surgical edits but failed multi-step JSON tool chains and LaTeX plumbing. The eval lane runs both Profiles on local models, and the catalog default follows pass^3 (T26).
 
-**Default model** (D10, none hard-coded): the Project setting, then `OPENPRISM_DEFAULT_MODEL`, then the first available of: the Ollama catalog default if it is pulled, `anthropic:claude-opus-5-5` if a key is set, the configured OpenAI-compatible preset. With none available, `submit` raises `model_unavailable` with setup instructions.
+**Default model** (D10, none hard-coded): the Project setting, then `PRISMTEX_DEFAULT_MODEL`, then the first available of: the Ollama catalog default if it is pulled, `anthropic:claude-opus-5-5` if a key is set, the configured OpenAI-compatible preset. With none available, `submit` raises `model_unavailable` with setup instructions.
 
 ### 11.7 Configuration
 
@@ -1480,23 +1482,23 @@ Every variable below is a field of Phase 0's `Settings` (pydantic-settings), rea
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `OPENPRISM_DEFAULT_MODEL` | unset | Default model ref when a Project sets none |
-| `OPENPRISM_OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama base URL |
-| `OPENPRISM_OLLAMA_NUM_CTX` | catalog (16,384 for qwen3 4B) | Pinned `num_ctx` for every Ollama model |
+| `PRISMTEX_DEFAULT_MODEL` | unset | Default model ref when a Project sets none |
+| `PRISMTEX_OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama base URL |
+| `PRISMTEX_OLLAMA_NUM_CTX` | catalog (16,384 for qwen3 4B) | Pinned `num_ctx` for every Ollama model |
 | `ANTHROPIC_API_KEY`, `CLAUDE_API_KEY` | unset | Anthropic key (`Settings.anthropic_api_key`); the second is an alias |
-| `OPENPRISM_OPENAI_PRESET`, `OPENPRISM_OPENAI_MODEL` | unset | The configured OpenAI-compatible endpoint (§11.3) |
-| `OPENPRISM_OPENAI_API_KEY` | unset | Key for the configured OpenAI-compatible preset, sent only to its base URL |
-| `OPENPRISM_OPENAI_BASE_URL` | unset | Base URL for `vllm` (required) and `lmstudio` (optional) |
-| `OPENPRISM_OPENAI_CONTEXT` | 32768 | Window for a model not in the catalog |
-| `OPENPRISM_OPENAI_PRICE` | unset | `"input,output"` USD per MTok for a model not in the catalog; setting it meters the model as paid |
-| `OPENPRISM_MAX_USD_PER_TURN` | 1.00 | Per-Turn cost cap for paid Providers |
-| `OPENPRISM_LEDGER_PATH` | `<data_dir>/state/ledger.jsonl` | The one cost ledger for every paid call, in the app and in eval runs |
-| `OPENPRISM_COST_STOP_USD` | unset | Cumulative stop over the ledger |
-| `OPENPRISM_ANTHROPIC_FALLBACKS` | `off` | `default` enables server-side refusal fallback |
-| `OPENPRISM_TRACE_PROMPTS` | `0` | `1` keeps full prompt text in Traces |
-| `OPENPRISM_FAKE_SCRIPT` | unset | Enables `fake:scripted` (end-to-end tests only) |
+| `PRISMTEX_OPENAI_PRESET`, `PRISMTEX_OPENAI_MODEL` | unset | The configured OpenAI-compatible endpoint (§11.3) |
+| `PRISMTEX_OPENAI_API_KEY` | unset | Key for the configured OpenAI-compatible preset, sent only to its base URL |
+| `PRISMTEX_OPENAI_BASE_URL` | unset | Base URL for `vllm` (required) and `lmstudio` (optional) |
+| `PRISMTEX_OPENAI_CONTEXT` | 32768 | Window for a model not in the catalog |
+| `PRISMTEX_OPENAI_PRICE` | unset | `"input,output"` USD per MTok for a model not in the catalog; setting it meters the model as paid |
+| `PRISMTEX_MAX_USD_PER_TURN` | 1.00 | Per-Turn cost cap for paid Providers |
+| `PRISMTEX_LEDGER_PATH` | `<data_dir>/state/ledger.jsonl` | The one cost ledger for every paid call, in the app and in eval runs |
+| `PRISMTEX_COST_STOP_USD` | unset | Cumulative stop over the ledger |
+| `PRISMTEX_ANTHROPIC_FALLBACKS` | `off` | `default` enables server-side refusal fallback |
+| `PRISMTEX_TRACE_PROMPTS` | `0` | `1` keeps full prompt text in Traces |
+| `PRISMTEX_FAKE_SCRIPT` | unset | Enables `fake:scripted` (end-to-end tests only) |
 
-A paid model with no known price is refused at `submit` (`model_unavailable`, naming `OPENPRISM_OPENAI_PRICE`): the guard fails closed rather than running unmetered.
+A paid model with no known price is refused at `submit` (`model_unavailable`, naming `PRISMTEX_OPENAI_PRICE`): the guard fails closed rather than running unmetered.
 
 ### 11.8 The cost guard and the ledger
 
@@ -1505,8 +1507,8 @@ A paid model with no known price is refused at `submit` (`model_unavailable`, na
 - **Settle, after every Step.** The cost from reported usage, priced per served model. An aborted stream is settled at the known input cost (from `message_start`, if it arrived) plus `max_output` × output, marked `estimated`. Every reservation is settled exactly once; a context manager guarantees this, cancellation included.
 - **Invariant.** At every moment, settled cost plus open reservations is at most the stop. Reservations and settlements are serialized under one `asyncio.Lock`, so concurrent Turns of different Projects cannot overshoot.
 - **Ledger rows** (`ledger.jsonl`, one JSON object per line, fsynced): `{"v": 1, "at", "kind": "reserve", "id", "project_id", "turn_id", "step", "model", "micro_usd"}` and `{"v": 1, "at", "kind": "settle", "id", "micro_usd", "usage", "estimated"}`. At open, the ledger sums settled rows plus open reservations; `recover()` settles orphaned reservations from a crashed process at their full amount.
-- **One ledger.** Every paid call, in the app and in eval runs, is reserved and settled in one persistent ledger at `OPENPRISM_LEDGER_PATH` (default `<data_dir>/state/ledger.jsonl`). Eval Trials run in temporary data directories, so the eval runner passes the same path explicitly; spend is never split across files. A paid model cannot run without a ledger: `ProviderRegistry.resolve` refuses it with `model_unavailable` naming `OPENPRISM_LEDGER_PATH`, and the Anthropic adapter cannot be constructed without one.
-- **App use.** The cumulative stop is optional (`OPENPRISM_COST_STOP_USD`), and the per-Turn cap always applies to paid Providers. Maintainers keep the ledger outside the data directory and back it up, so deleting a data folder never resets the count.
+- **One ledger.** Every paid call, in the app and in eval runs, is reserved and settled in one persistent ledger at `PRISMTEX_LEDGER_PATH` (default `<data_dir>/state/ledger.jsonl`). Eval Trials run in temporary data directories, so the eval runner passes the same path explicitly; spend is never split across files. A paid model cannot run without a ledger: `ProviderRegistry.resolve` refuses it with `model_unavailable` naming `PRISMTEX_LEDGER_PATH`, and the Anthropic adapter cannot be constructed without one.
+- **App use.** The cumulative stop is optional (`PRISMTEX_COST_STOP_USD`), and the per-Turn cap always applies to paid Providers. Maintainers keep the ledger outside the data directory and back it up, so deleting a data folder never resets the count.
 - **Eval use.** The `anthropic` lane requires the ledger path and a cumulative stop of at most 9.50 against the $10 cap. It opens the ledger `exclusive`: a lock file created with `O_CREAT | O_EXCL` refuses a second concurrent run. Requests run sequentially, which keeps the cache warm. The external backstops of revamp §7.3 still apply: a dedicated key in a workspace with a $10 spend limit, auto-reload off, and the key revoked afterwards.
 
 ---
@@ -1515,12 +1517,12 @@ A paid model with no known price is refused at `submit` (`model_unavailable`, na
 
 | Invariant | How it is enforced | Test |
 |---|---|---|
-| Tools reach only the Project's Source files, and Assets as metadata | `TurnBase` is built from `ProjectStore.list_files`; every path goes through `workspace.check_source_path`, which rejects absolute, drive-relative and UNC paths, `..`, NUL and `<>:"\|?*`, alternate data streams, Windows device names with any extension, trailing dots and spaces, segments starting with `-`, paths over 240 characters, and the prefixes `.git/`, `.prism/` and `.openprism/` | `test_tools_deny_project_state_build_scripts_and_escapes` |
+| Tools reach only the Project's Source files, and Assets as metadata | `TurnBase` is built from `ProjectStore.list_files`; every path goes through `workspace.check_source_path`, which rejects absolute, drive-relative and UNC paths, `..`, NUL and `<>:"\|?*`, alternate data streams, Windows device names with any extension, trailing dots and spaces, segments starting with `-`, paths over 240 characters, and the prefixes `.git/`, `.prism/` and `.prismtex/` | `test_tools_deny_project_state_build_scripts_and_escapes` |
 | Tools cannot reach Project state | Project state lives outside the Project folder (ADR 0004); staging lists only Project files | same |
 | Writes only to Source extensions | Allowlist `.tex .ltx .bib .sty .cls .bst .bbx .cbx .cfg .def .txt`; `latexmkrc`, `.lua`, `.pl`, `.py` and scripts are denied | same |
 | No agent write during a Turn | No path from tools to `ProjectStore.write`; only `ProposalDesk.resolve` writes | `test_edit_turn_leaves_project_bytes_untouched_until_accept` |
 | No control characters in staged text | The escape guard on agentic LaTeX arguments; a C0 check on every staged write; guided payloads never pass through JSON | `test_single_backslash_latex_in_tool_args_is_rejected_with_the_lost_command_named` |
-| The compile argv is never influenced by the model | Built only by `openprism.compile` from Project settings validated by the platform; `check()` takes no arguments; the model cannot name an engine, a Root file or a flag | `test_check_tool_accepts_no_arguments` |
+| The compile argv is never influenced by the model | Built only by `prismtex.compile` from Project settings validated by the platform; `check()` takes no arguments; the model cannot name an engine, a Root file or a flag | `test_check_tool_accepts_no_arguments` |
 | Scratch compiles cannot write user files | Scratch trees live under `build/`; Assets are linked from a per-Project cache, never from the Project folder | `test_scratch_compile_never_writes_the_project_folder` |
 | Secrets stay secret | Keys are read only through `Settings` (the environment or `.env`, never Project files), bound to their base URL, never put in events, Traces, errors or Thread files; Trace records exclude request headers | `test_openai_compat_never_sends_a_key_to_another_base_url`, `test_traces_and_threads_never_contain_api_keys` |
 | Project text is data, never instructions | It travels only in tagged user-message parts, never in `system`; there are no network tools and no PDF-text tool | `test_system_prompt_is_byte_identical_across_projects` |
@@ -1627,7 +1629,7 @@ Each task is test-first: write the named failing test, make it pass, then comple
 
 | # | Goal | Files | Produces, and the task that consumes it | First failing test |
 |---|---|---|---|---|
-| T1 | Workspace pieces the agent needs; cancellation | `workspace/` (`write_new`, `check_source_path` on Phase 0's path policy, `list_files` kinds, `delete(base_version)`, `ProjectSettings.agent`), `openprism/cancel.py` | `ProjectStore` extras, `CancelToken`; T2 to T22 | `test_crlf_file_has_a_bytes_version_and_write_new_refuses_an_existing_file` |
+| T1 | Workspace pieces the agent needs; cancellation | `workspace/` (`write_new`, `check_source_path` on Phase 0's path policy, `list_files` kinds, `delete(base_version)`, `ProjectSettings.agent`), `prismtex/cancel.py` | `ProjectStore` extras, `CancelToken`; T2 to T22 | `test_crlf_file_has_a_bytes_version_and_write_new_refuses_an_existing_file` |
 | T2 | Event union v1 and the Trace | `agent/events.py`, `agent/trace.py` | `Envelope`, `TraceWriter`, `TraceReader`; T17 | `test_trace_replays_events_after_seq_and_ends_after_done` |
 | T3 | Outline v2 | `outline/__init__.py` (from `parse_tex.py`) | `Outline`, `build_outline`; T5, T14, T15, T19 | `test_outline_heading_spans_follow_the_input_graph_from_the_root_file` |
 | T4 | Text core | `agent/text.py`, `agent/data/commands.txt` | views, matching, escape guard; T16, T19 | `test_closest_match_quotes_numbered_raw_lines_never_repr` |

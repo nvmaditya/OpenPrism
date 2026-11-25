@@ -4,6 +4,8 @@ status: proposed
 
 # Agent changes are proposals, compiled in a scratch copy and accepted per hunk
 
+> Renamed to PrismTeX on 2026-11-25: read `openprism` as `prismtex` and `OPENPRISM_` as `PRISMTEX_`.
+
 An agent turn never writes to the project folder.
 
 - **During the turn.** Its edits build up in a staging overlay. Verification compiles that overlay in a scratch copy and compares the diagnostics with the pre-turn baseline, flagging only new errors. Up to two repair rounds follow.

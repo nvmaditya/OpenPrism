@@ -1,0 +1,21 @@
+# LF everywhere, whatever the contributor's platform.
+* text=auto eol=lf
+
+# Windows scripts need CRLF to run.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary: never normalize or diff as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
