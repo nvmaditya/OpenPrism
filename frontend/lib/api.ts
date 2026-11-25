@@ -1,11 +1,22 @@
 // Client for the PrismTeX HTTP API. URLs are relative: the Next.js server
 // proxies /api to the backend, so the browser stays on one origin.
+//
+// No access token is sent. In Phase 0 the UI has no sign-in, so when the backend
+// runs in token mode (PRISMTEX_ACCESS_TOKEN set) every request here gets a 401;
+// token mode is API-only until the Phase 4 sign-in. See SECURITY.md. (SECURITY-3)
 
 export type Engine = "pdflatex" | "xelatex" | "lualatex";
 export const ENGINES: readonly Engine[] = ["pdflatex", "xelatex", "lualatex"];
 
 export type TemplateKind = "blank" | "paper" | "resume";
 export type ProjectKind = TemplateKind | "import";
+
+/**
+ * Longest project name the backend accepts, counted in Unicode code points to
+ * match Python's `len` (store._clean_name, MAX_NAME). A longer name is rejected
+ * with `The name must be 1 to 120 characters.`, so callers trim to this first.
+ */
+export const MAX_PROJECT_NAME = 120;
 
 export type ProjectInfo = {
   id: string;

@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import {
   ENGINES,
   errorMessage,
+  MAX_PROJECT_NAME,
   updateProject,
   type Engine,
   type ProjectChanges,
@@ -17,7 +18,7 @@ type Props = {
   onSaved: (project: ProjectInfo) => void;
 };
 
-const MAX_NAME = 120;
+const MAX_NAME = MAX_PROJECT_NAME;
 
 /** The Project Info tab. Remount it (via `key`) to reset the form to `project`. */
 export function ProjectSettings({ project, texFiles, onSaved }: Props) {
