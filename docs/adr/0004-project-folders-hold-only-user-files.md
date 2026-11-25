@@ -4,6 +4,8 @@ status: proposed
 
 # Project folders hold only the user's files; history is a git shadow repository
 
+> Renamed to PrismTeX on 2026-11-25: read `openprism` as `prismtex` and `OPENPRISM_` as `PRISMTEX_`.
+
 A project folder under `<data_dir>/projects/<id>/` contains only what the user put there. Everything else lives beside it:
 
 - settings, threads, turn traces and pending proposals in `<data_dir>/state/<id>/`;

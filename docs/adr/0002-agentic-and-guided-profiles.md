@@ -4,6 +4,8 @@ status: proposed
 
 # Two agent profiles, with LaTeX plumbing done by the host
 
+> Renamed to PrismTeX on 2026-11-25: read `openprism` as `prismtex` and `OPENPRISM_` as `PRISMTEX_`.
+
 One turn interface runs one of two profiles, chosen from the model's capabilities (users can override the choice).
 
 - **Agentic** (frontier models such as Claude): the model drives a tool loop, with `str_replace`-style edits on numbered, ranged views.
