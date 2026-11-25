@@ -2,101 +2,85 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { ArrowLeft, FileCodeCorner, FileText, Info, Play, Save, ScrollText, X } from "lucide-react";
 import {
-  ArrowLeft,
-  ArrowUp,
-  CheckCircle2,
-  AlertCircle,
-  CircleDashed,
-  ExternalLink,
-  FileCode2,
-  FileText,
-  Folder,
-  Info,
-  ListTree,
-  Loader2,
-  MessageSquare,
-  Play,
-  Save,
-  ScrollText,
-  History,
-  UserPlus,
-} from "lucide-react";
-import {
-  TreeNode,
+  ApiError,
   compileProject,
-  getLog,
+  errorMessage,
   getOutline,
+  getProject,
   getTree,
   listLogs,
-  listProjects,
-  OutlineItem,
-  pdfUrl,
-  ProjectLog,
-  readFile,
-  renderPreviews,
-  streamChat,
-  writeFile,
+  type CompileLogMeta,
+  type CompileResult,
+  type DirNode,
+  type OutlineItem,
+  type ProjectInfo,
 } from "@/lib/api";
+import { filePaths, isTexFile } from "@/lib/tree";
+import { useFileBuffer } from "@/lib/useFileBuffer";
+import { CompilePanel } from "@/components/CompilePanel";
+import { CompileStatusChip } from "@/components/CompileStatusChip";
+import { ConflictBar } from "@/components/ConflictBar";
 import { FilePanel } from "@/components/FilePanel";
+import { LogsPanel } from "@/components/LogsPanel";
+import { OutlinePanel } from "@/components/OutlinePanel";
+import { ProjectSettings } from "@/components/ProjectSettings";
+import { SourceEditor, type LineReveal } from "@/components/SourceEditor";
 
-type ChatLine = { role: "user" | "assistant"; text: string };
+type Tab = "compiled" | "logs" | "info";
 
-function offsetForLine(text: string, line: number): number {
-  if (line <= 1) return 0;
-  let pos = 0;
-  let current = 1;
-  while (current < line) {
-    const nl = text.indexOf("\n", pos);
-    if (nl < 0) return text.length;
-    pos = nl + 1;
-    current += 1;
-  }
-  return pos;
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex flex-1 items-center justify-center gap-1.5 py-2.5 ${
+        active ? "border-b-2 border-zinc-100 text-zinc-100" : "text-zinc-500"
+      }`}
+    >
+      {children}
+    </button>
+  );
 }
 
-function revealEditorLine(
-  ta: HTMLTextAreaElement,
-  text: string,
-  line: number,
-): void {
-  const pos = offsetForLine(text, line);
-  ta.focus();
-  ta.setSelectionRange(pos, pos);
-  const parsed = parseFloat(getComputedStyle(ta).lineHeight);
-  const lineHeight = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
-  ta.scrollTop = Math.max(0, (line - 1) * lineHeight - ta.clientHeight / 4);
+export default function ProjectPage() {
+  const { id } = useParams<{ id: string }>();
+  // Keyed so that no state, above all no editor buffer, carries over between projects.
+  return <ProjectIde key={id} projectId={id} />;
 }
 
-export default function ProjectIdePage() {
-  const params = useParams();
-  const projectId = String(params.id || "");
+function ProjectIde({ projectId }: { projectId: string }) {
+  const buffer = useFileBuffer(projectId);
+  const { open, save: saveBuffer, renamed, deleted } = buffer;
 
-  const [projectName, setProjectName] = useState("Project");
-  const [tree, setTree] = useState<TreeNode | null>(null);
-  const [openPath, setOpenPath] = useState<string | null>("main.tex");
-  const [content, setContent] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [log, setLog] = useState("");
-  const [compileStatus, setCompileStatus] = useState<
-    "idle" | "running" | "ok" | "failed"
-  >("idle");
-  const [rightTab, setRightTab] = useState<
-    "compiled" | "logs" | "info" | "versions" | "comments"
-  >("compiled");
-  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [missing, setMissing] = useState(false);
+  const [tree, setTree] = useState<DirNode | null>(null);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
-  const pendingLine = useRef<number | null>(null);
-  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
-  const [pdfAvailable, setPdfAvailable] = useState(false);
-  const [chatInput, setChatInput] = useState("");
-  const [chatLines, setChatLines] = useState<ChatLine[]>([]);
-  const [chatBusy, setChatBusy] = useState(false);
-  const [leftTab, setLeftTab] = useState<"files" | "chats">("files");
-  const [logEntries, setLogEntries] = useState<ProjectLog[]>([]);
-  const [openLogId, setOpenLogId] = useState<string | null>(null);
+  const [logs, setLogs] = useState<CompileLogMeta[]>([]);
+  const [compiling, setCompiling] = useState(false);
+  const [result, setResult] = useState<CompileResult | null>(null);
+  const [tab, setTab] = useState<Tab>("compiled");
+  const [reveal, setReveal] = useState<LineReveal | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const report = useCallback((err: unknown) => setError(errorMessage(err)), []);
+
+  const refreshTree = useCallback(async () => {
+    const next = await getTree(projectId);
+    setTree(next);
+    return next;
+  }, [projectId]);
 
   const refreshOutline = useCallback(async () => {
     try {
@@ -108,291 +92,170 @@ export default function ProjectIdePage() {
 
   const refreshLogs = useCallback(async () => {
     try {
-      const items = await listLogs(projectId);
-      items.sort((a, b) =>
-        String(b.created_at || "").localeCompare(String(a.created_at || "")),
-      );
-      setLogEntries(items);
+      setLogs(await listLogs(projectId));
     } catch {
-      /* logs endpoint optional on first paint */
+      // The Logs tab keeps its last list; a compile reports its own errors.
     }
   }, [projectId]);
 
-  const refreshTree = useCallback(async () => {
-    const t = await getTree(projectId);
-    setTree(t);
-    return t;
-  }, [projectId]);
+  // Refreshes never touch the editor buffer: only the tree, the outline and the settings.
+  const refreshFiles = useCallback(async () => {
+    try {
+      await Promise.all([refreshTree(), refreshOutline()]);
+    } catch (err) {
+      report(err);
+    }
+  }, [refreshTree, refreshOutline, report]);
 
-  const openFile = useCallback(
-    async (path: string) => {
-      setError(null);
-      const f = await readFile(projectId, path);
-      setOpenPath(path);
-      setContent(f.encoding === "utf-8" ? f.content : "[Binary file]");
-      setDirty(false);
+  // A rename or delete can take the root file with it, so the settings are reread too.
+  const refreshAll = useCallback(async () => {
+    try {
+      const [info] = await Promise.all([getProject(projectId), refreshTree(), refreshOutline()]);
+      setProject(info);
+    } catch (err) {
+      report(err);
+    }
+  }, [projectId, refreshTree, refreshOutline, report]);
+
+  const openAt = useCallback(
+    async (path: string, line: number | null = null) => {
+      try {
+        if ((await open(path)) && line) {
+          setReveal((prev) => ({ line, seq: (prev?.seq ?? 0) + 1 }));
+        }
+      } catch (err) {
+        report(err);
+      }
     },
-    [projectId],
+    [open, report],
   );
 
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
       try {
-        const projects = await listProjects();
-        const p = projects.find((x) => x.id === projectId);
-        if (p) setProjectName(p.name);
-        await refreshTree();
-        await refreshLogs();
-        await refreshOutline();
-        await openFile("main.tex");
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        const info = await getProject(projectId);
+        if (cancelled) return;
+        setProject(info);
+        const paths = filePaths(await refreshTree());
+        void refreshOutline();
+        void refreshLogs();
+        const first =
+          info.root_file && paths.includes(info.root_file) ? info.root_file : paths.find(isTexFile);
+        if (first && !cancelled) await open(first);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "project_not_found") setMissing(true);
+        else report(err);
       }
     })();
-  }, [projectId, refreshTree, refreshLogs, refreshOutline, openFile]);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, open, refreshTree, refreshOutline, refreshLogs, report]);
 
   useEffect(() => {
-    if (!openLogId) return;
-    void getLog(projectId, openLogId)
-      .then((full) => setLog(String(full.log || "")))
-      .catch(() => {});
-  }, [openLogId, projectId]);
+    if (project) document.title = `${project.name} · PrismTeX`;
+  }, [project]);
 
-  useEffect(() => {
-    const line = pendingLine.current;
-    const ta = editorRef.current;
-    if (line == null || !ta) return;
-    pendingLine.current = null;
-    requestAnimationFrame(() => revealEditorLine(ta, content, line));
-  }, [content, openPath]);
-
-  async function jumpToOutline(item: OutlineItem) {
-    pendingLine.current = item.line;
-    if (openPath === item.path) {
-      const ta = editorRef.current;
-      if (ta) revealEditorLine(ta, content, item.line);
-      pendingLine.current = null;
-      return;
+  const save = useCallback(async () => {
+    try {
+      const outcome = await saveBuffer();
+      if (outcome === "saved") void refreshFiles();
+      return outcome;
+    } catch (err) {
+      report(err);
+      return "failed" as const;
     }
-    await openFile(item.path);
-  }
+  }, [saveBuffer, refreshFiles, report]);
 
-  async function save() {
-    if (!openPath) return;
+  async function compile() {
+    if (compiling) return;
     setError(null);
-    try {
-      await writeFile(projectId, openPath, content);
-      setDirty(false);
-      await refreshTree();
-      await refreshOutline();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    if (buffer.dirty) {
+      const outcome = await save();
+      // A conflict shows its bar, a failure its message; neither compiles stale text.
+      if (outcome === "conflict" || outcome === "failed") return;
     }
-  }
-
-  async function onCompile() {
-    setError(null);
-    setCompileStatus("running");
+    setCompiling(true);
     try {
-      const res = await compileProject(projectId, "pdflatex", "main.tex");
-      setLog(String(res.log || ""));
-      const ok = Boolean(res.success);
-      setCompileStatus(ok ? "ok" : "failed");
-      setPdfAvailable(ok && Boolean(res.pdf_path));
-      setRightTab(ok ? "compiled" : "logs");
-      if (ok) {
-        try {
-          const prev = await renderPreviews(projectId, "main.pdf");
-          const base =
-            process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-          setPreviewUrls(
-            (prev.page_urls || []).map((u) =>
-              u.startsWith("http") ? u : `${base.replace(/\/$/, "")}${u}`,
-            ),
-          );
-        } catch {
-          setPreviewUrls([]);
-        }
-      }
-      await refreshLogs();
-    } catch (e) {
-      setCompileStatus("failed");
-      setError(e instanceof Error ? e.message : String(e));
-      setRightTab("logs");
-    }
-  }
-
-  async function onChat() {
-    const msg = chatInput.trim();
-    if (!msg || chatBusy) return;
-    setChatBusy(true);
-    setChatInput("");
-    setChatLines((lines) => [...lines, { role: "user", text: msg }]);
-    let assistant = "";
-    let sawTool = false;
-    let lastChanged: string | null = null;
-    try {
-      await streamChat(
-        projectId,
-        msg,
-        (ev) => {
-          if (ev.event === "token") {
-            assistant += String(ev.data.text || "");
-            setChatLines((lines) => {
-              const copy = [...lines];
-              const last = copy[copy.length - 1];
-              if (last?.role === "assistant") {
-                copy[copy.length - 1] = { role: "assistant", text: assistant };
-              } else {
-                copy.push({ role: "assistant", text: assistant });
-              }
-              return copy;
-            });
-          }
-          if (ev.event === "tool_start") {
-            sawTool = true;
-            const name = String(ev.data.name || "tool");
-            setChatLines((lines) => {
-              // light status without exposing SSE jargon
-              const note = `Working… (${name.replace(/_/g, " ")})`;
-              const copy = [...lines];
-              const last = copy[copy.length - 1];
-              if (last?.role === "assistant" && last.text.startsWith("Working")) {
-                copy[copy.length - 1] = { role: "assistant", text: note };
-              } else if (!assistant) {
-                copy.push({ role: "assistant", text: note });
-              }
-              return copy;
-            });
-          }
-          if (ev.event === "file_changed") {
-            const p = String(ev.data.path || "");
-            lastChanged = p || lastChanged;
-            void refreshTree().then(() => {
-              if (p) void openFile(p);
-            });
-          }
-          if (ev.event === "tool_end") {
-            const result = String(ev.data.result || "");
-            if (result.startsWith("ERROR")) {
-              setError(result.slice(0, 240));
-            }
-          }
-          if (ev.event === "error") {
-            setError(String(ev.data.message || "Something went wrong"));
-          }
-          if (ev.event === "done") {
-            const traceId = String(ev.data.trace_id || "");
-            const verified = ev.data.verified;
-            if (traceId) {
-              const note =
-                verified === false
-                  ? `Verification failed. Paste this trace: ${traceId}`
-                  : `Trace ${traceId}`;
-              assistant = assistant ? `${assistant}\n\n${note}` : note;
-              setChatLines((lines) => {
-                const copy = [...lines];
-                const last = copy[copy.length - 1];
-                if (last?.role === "assistant") {
-                  copy[copy.length - 1] = { role: "assistant", text: assistant };
-                } else {
-                  copy.push({ role: "assistant", text: note });
-                }
-                return copy;
-              });
-              setOpenLogId(traceId);
-            }
-            if (verified === false) {
-              setRightTab("logs");
-            }
-            void refreshLogs();
-            void refreshOutline();
-            void refreshTree().then(() => {
-              if (lastChanged) void openFile(lastChanged);
-              else if (openPath) void openFile(openPath);
-            });
-          }
-        },
-        undefined,
-        {
-          open_path: openPath,
-          open_content: content,
-        },
-      );
-      if (!assistant && !sawTool) {
-        setChatLines((lines) => [
-          ...lines,
-          {
-            role: "assistant",
-            text: "I could not apply file changes. Try: “Create notes.tex with a short article” or “Add a section titled Methods to main.tex”.",
-          },
-        ]);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setResult(await compileProject(projectId));
+      setTab("compiled");
+    } catch (err) {
+      report(err);
+      if (err instanceof ApiError && err.code.startsWith("root_file_")) setTab("info");
     } finally {
-      setChatBusy(false);
+      setCompiling(false);
+      void refreshLogs();
     }
   }
 
-  const statusLabel =
-    compileStatus === "running"
-      ? "Compiling…"
-      : compileStatus === "ok"
-        ? "Up to date"
-        : compileStatus === "failed"
-          ? "Needs attention"
-          : "Not compiled yet";
+  async function resolveConflict(action: "reload" | "overwrite") {
+    try {
+      if (action === "reload") {
+        await buffer.reloadFromDisk();
+      } else if ((await buffer.overwrite()) === "saved") {
+        void refreshFiles();
+      }
+    } catch (err) {
+      report(err);
+    }
+  }
 
-  const StatusIcon =
-    compileStatus === "running"
-      ? Loader2
-      : compileStatus === "ok"
-        ? CheckCircle2
-        : compileStatus === "failed"
-          ? AlertCircle
-          : CircleDashed;
+  if (missing) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 text-sm text-zinc-400">
+        <p>This project does not exist.</p>
+        <Link href="/" className="text-sky-400 hover:underline">
+          Back to your projects
+        </Link>
+      </div>
+    );
+  }
+
+  const file = buffer.file;
+  const texFiles = tree ? filePaths(tree).filter(isTexFile) : [];
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-zinc-950 text-zinc-100">
-      <header className="border-b border-zinc-800 px-3 py-2 flex items-center gap-3 shrink-0">
+    <div className="flex h-screen flex-col overflow-hidden bg-zinc-950 text-zinc-100">
+      <header className="flex shrink-0 items-center gap-3 border-b border-zinc-800 px-3 py-2">
         <Link
           href="/"
-          className="inline-flex items-center justify-center h-8 w-8 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
           title="All projects"
+          onClick={(event) => {
+            if (
+              buffer.dirty &&
+              !window.confirm(`Leave without saving your changes to “${file?.path}”?`)
+            ) {
+              event.preventDefault();
+            }
+          }}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden />
           <span className="sr-only">All projects</span>
         </Link>
-        <span className="font-medium truncate max-w-[200px]">{projectName}</span>
-        <button
-          type="button"
-          disabled
-          title="Local only — invite is not available"
-          className="inline-flex items-center gap-1 text-xs text-zinc-600 cursor-not-allowed"
-        >
-          <UserPlus className="h-3.5 w-3.5" aria-hidden />
-          Invite
-        </button>
+        <span className="max-w-[240px] truncate font-medium">{project?.name ?? ""}</span>
         <div className="ml-auto flex items-center gap-2">
+          <CompileStatusChip
+            running={compiling}
+            status={result?.status ?? null}
+            onClick={() => setTab("compiled")}
+          />
           <button
             type="button"
-            onClick={() => void onCompile()}
-            disabled={compileStatus === "running"}
-            className="inline-flex items-center gap-1.5 text-xs rounded-md bg-zinc-100 text-zinc-900 px-3 py-1.5 font-medium hover:bg-white disabled:opacity-50"
+            onClick={() => void compile()}
+            disabled={compiling}
+            title={buffer.dirty ? "Save the open file, then compile" : "Compile the project"}
+            className="inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-white disabled:opacity-50"
           >
-            {compileStatus === "running" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            ) : (
-              <Play className="h-3.5 w-3.5" aria-hidden />
-            )}
-            {compileStatus === "running" ? "Compiling…" : "Compile"}
+            <Play className="h-3.5 w-3.5" aria-hidden />
+            Compile
           </button>
           <button
             type="button"
-            disabled={!dirty}
+            disabled={!buffer.dirty || buffer.saving}
             onClick={() => void save()}
-            className="inline-flex items-center gap-1.5 text-xs rounded-md border border-zinc-600 px-3 py-1.5 disabled:opacity-40 hover:bg-zinc-900"
+            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-600 px-3 py-1.5 text-xs hover:bg-zinc-900 disabled:opacity-40"
           >
             <Save className="h-3.5 w-3.5" aria-hidden />
             Save
@@ -401,414 +264,109 @@ export default function ProjectIdePage() {
       </header>
 
       {error && (
-        <div className="bg-amber-950/40 border-b border-amber-900/50 px-4 py-1.5 text-xs text-amber-100">
-          {error}
+        <div
+          role="alert"
+          className="flex items-center gap-2 border-b border-amber-900/50 bg-amber-950/40 px-4 py-1.5 text-xs text-amber-100"
+        >
+          <span className="flex-1">{error}</span>
+          <button type="button" onClick={() => setError(null)} title="Dismiss">
+            <X className="h-3.5 w-3.5" aria-hidden />
+            <span className="sr-only">Dismiss</span>
+          </button>
         </div>
       )}
 
-      <div className="flex flex-1 min-h-0">
-        {/* Left: Files */}
-        <aside className="w-52 border-r border-zinc-800 flex flex-col min-h-0 shrink-0">
-          <div className="flex text-xs border-b border-zinc-800">
-            <button
-              type="button"
-              onClick={() => setLeftTab("files")}
-              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2 ${
-                leftTab === "files"
-                  ? "text-zinc-100 border-b border-zinc-100"
-                  : "text-zinc-500"
-              }`}
-            >
-              <Folder className="h-3.5 w-3.5" aria-hidden />
-              Files
-            </button>
-            <button
-              type="button"
-              onClick={() => setLeftTab("chats")}
-              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2 ${
-                leftTab === "chats"
-                  ? "text-zinc-100 border-b border-zinc-100"
-                  : "text-zinc-500"
-              }`}
-            >
-              <MessageSquare className="h-3.5 w-3.5" aria-hidden />
-              Chats
-            </button>
+      <div className="flex min-h-0 flex-1">
+        <aside className="flex w-52 shrink-0 flex-col border-r border-zinc-800">
+          <h2 className="border-b border-zinc-800 px-3 py-2 text-xs text-zinc-300">Files</h2>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <FilePanel
+              projectId={projectId}
+              tree={tree}
+              openPath={file?.path ?? null}
+              unsavedPath={buffer.dirty ? (file?.path ?? null) : null}
+              onOpen={(path) => void openAt(path)}
+              onRefresh={refreshAll}
+              onError={setError}
+              onDeleted={deleted}
+              onRenamed={renamed}
+            />
           </div>
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            {leftTab === "files" && (
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <FilePanel
-                  projectId={projectId}
-                  tree={tree}
-                  openPath={openPath}
-                  onOpen={(p) => void openFile(p)}
-                  onRefresh={refreshTree}
-                  onError={(m) => setError(m)}
-                  onDeleted={(paths) => {
-                    if (openPath && paths.includes(openPath)) {
-                      setOpenPath(null);
-                      setContent("");
-                      setDirty(false);
-                    }
-                  }}
-                  onRenamed={(from, to) => {
-                    if (openPath === from) {
-                      setOpenPath(to);
-                      void openFile(to);
-                    }
-                  }}
-                />
-              </div>
-            )}
-            {leftTab === "files" && (
-              <div className="border-t border-zinc-800 max-h-48 overflow-auto shrink-0">
-                <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-zinc-500 flex items-center gap-1">
-                  <ListTree className="h-3 w-3" aria-hidden />
-                  Outline
-                </div>
-                {outline.length === 0 ? (
-                  <p className="px-2 pb-2 text-[11px] text-zinc-600">
-                    No sections yet.
-                  </p>
-                ) : (
-                  <ul className="pb-2">
-                    {outline.map((item) => (
-                      <li key={`${item.path}:${item.line}:${item.title}`}>
-                        <button
-                          type="button"
-                          onClick={() => void jumpToOutline(item)}
-                          className="w-full text-left px-2 py-0.5 text-[12px] text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/70 truncate"
-                          style={{ paddingLeft: 8 + Math.max(0, item.level - 1) * 10 }}
-                          title={`${item.path}:${item.line}`}
-                        >
-                          {item.title}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-            {leftTab === "chats" && (
-              <div className="px-2 py-2 text-xs text-zinc-500 space-y-2 h-full overflow-auto">
-                <p>Current conversation</p>
-                {chatLines.length === 0 && (
-                  <p className="text-zinc-600">No messages yet. Ask anything below.</p>
-                )}
-                {chatLines
-                  .filter((l) => l.role === "user")
-                  .slice(-8)
-                  .map((l, i) => (
-                    <div key={i} className="truncate text-zinc-400">
-                      {l.text}
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
+          <OutlinePanel items={outline} onJump={(item) => void openAt(item.path, item.line)} />
         </aside>
 
-        {/* Center: editor + ask anything */}
-        <section className="flex-1 flex flex-col min-w-0 min-h-0 relative">
-          <div className="px-3 py-1.5 text-xs text-zinc-500 border-b border-zinc-800 flex items-center gap-2">
-            <FileCode2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span className="font-medium text-zinc-300">
-              {openPath?.split("/").pop() || "Untitled"}
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-1.5 text-xs text-zinc-500">
+            <FileCodeCorner className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="truncate font-medium text-zinc-300" title={file?.path}>
+              {file?.path ?? "No file open"}
             </span>
-            {dirty && <span className="text-zinc-600">Unsaved</span>}
-          </div>
-          <textarea
-            ref={editorRef}
-            className="flex-1 min-h-0 w-full bg-[#0c0c0e] text-zinc-200 font-mono text-[13px] p-4 outline-none resize-none leading-relaxed"
-            value={content}
-            onChange={(e) => {
-              setContent(e.target.value);
-              setDirty(true);
-            }}
-            spellCheck={false}
-          />
-
-          {/* Floating Ask anything */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[min(560px,92%)] z-10">
-            {chatLines.length > 0 && (
-              <div className="mb-2 max-h-36 overflow-auto rounded-xl border border-zinc-700/80 bg-zinc-900/95 px-3 py-2 text-sm shadow-xl space-y-2">
-                {chatLines.slice(-6).map((l, i) => (
-                  <div
-                    key={i}
-                    className={
-                      l.role === "user"
-                        ? "text-zinc-400"
-                        : "text-zinc-100 whitespace-pre-wrap"
-                    }
-                  >
-                    {l.text}
-                  </div>
-                ))}
-              </div>
+            {buffer.saving ? (
+              <span>Saving…</span>
+            ) : (
+              buffer.dirty && <span className="text-zinc-600">Unsaved</span>
             )}
-            <div className="flex items-center gap-2 rounded-2xl border border-zinc-600/80 bg-zinc-900/95 shadow-2xl px-3 py-2 backdrop-blur">
-              <input
-                className="flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500 py-1.5"
-                placeholder="Ask anything"
-                value={chatInput}
-                disabled={chatBusy}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void onChat();
-                  }
-                }}
-              />
-              <button
-                type="button"
-                disabled={chatBusy || !chatInput.trim()}
-                onClick={() => void onChat()}
-                className="rounded-full bg-zinc-100 text-zinc-900 h-8 w-8 flex items-center justify-center disabled:opacity-40"
-                aria-label="Send"
-              >
-                {chatBusy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                ) : (
-                  <ArrowUp className="h-4 w-4" aria-hidden />
-                )}
-              </button>
-            </div>
           </div>
+          {buffer.conflict && (
+            <ConflictBar
+              busy={buffer.saving || buffer.loading}
+              onReload={() => void resolveConflict("reload")}
+              onOverwrite={() => void resolveConflict("overwrite")}
+            />
+          )}
+          {file && !file.binary ? (
+            <SourceEditor
+              text={file.text}
+              onChange={buffer.edit}
+              onSave={() => void save()}
+              reveal={reveal}
+            />
+          ) : (
+            <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-zinc-500">
+              {buffer.loading
+                ? "Loading…"
+                : file
+                  ? `“${file.path}” is a binary file and cannot be edited here.`
+                  : "Open a file from the tree."}
+            </div>
+          )}
+          <p className="border-t border-zinc-800 px-3 py-1.5 text-xs text-zinc-600">
+            The writing agent is being rebuilt and returns in v0.1.0.
+          </p>
         </section>
 
-        {/* Right: Compiled / Logs */}
-        <aside className="w-[420px] border-l border-zinc-800 flex flex-col min-h-0 shrink-0 bg-zinc-900/20">
-          <div className="flex text-xs border-b border-zinc-800">
-            <button
-              type="button"
-              onClick={() => setRightTab("compiled")}
-              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 ${
-                rightTab === "compiled"
-                  ? "text-zinc-100 border-b-2 border-zinc-100"
-                  : "text-zinc-500"
-              }`}
-            >
+        <aside className="flex w-[420px] shrink-0 flex-col border-l border-zinc-800 bg-zinc-900/20">
+          <div className="flex border-b border-zinc-800 text-xs">
+            <TabButton active={tab === "compiled"} onClick={() => setTab("compiled")}>
               <FileText className="h-3.5 w-3.5" aria-hidden />
               Compiled
-            </button>
-            <button
-              type="button"
-              onClick={() => setRightTab("logs")}
-              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 ${
-                rightTab === "logs"
-                  ? "text-zinc-100 border-b-2 border-zinc-100"
-                  : "text-zinc-500"
-              }`}
-            >
+            </TabButton>
+            <TabButton active={tab === "logs"} onClick={() => setTab("logs")}>
               <ScrollText className="h-3.5 w-3.5" aria-hidden />
               Logs
-            </button>
-            <button
-              type="button"
-              onClick={() => setRightTab("info")}
-              className={`flex-1 inline-flex items-center justify-center gap-1 py-2.5 ${
-                rightTab === "info"
-                  ? "text-zinc-100 border-b-2 border-zinc-100"
-                  : "text-zinc-500"
-              }`}
-            >
+            </TabButton>
+            <TabButton active={tab === "info"} onClick={() => setTab("info")}>
               <Info className="h-3.5 w-3.5" aria-hidden />
-              Info
-            </button>
-            <button
-              type="button"
-              onClick={() => setRightTab("versions")}
-              className={`flex-1 inline-flex items-center justify-center gap-1 py-2.5 ${
-                rightTab === "versions"
-                  ? "text-zinc-100 border-b-2 border-zinc-100"
-                  : "text-zinc-500"
-              }`}
-            >
-              <History className="h-3.5 w-3.5" aria-hidden />
-              Versions
-            </button>
-            <button
-              type="button"
-              onClick={() => setRightTab("comments")}
-              className={`flex-1 inline-flex items-center justify-center gap-1 py-2.5 ${
-                rightTab === "comments"
-                  ? "text-zinc-100 border-b-2 border-zinc-100"
-                  : "text-zinc-500"
-              }`}
-            >
-              <MessageSquare className="h-3.5 w-3.5" aria-hidden />
-              Comments
-            </button>
+              Project Info
+            </TabButton>
           </div>
-          <div className="px-3 py-1.5 text-xs text-zinc-500 border-b border-zinc-800 flex items-center justify-between">
-            <span
-              className={`inline-flex items-center gap-1.5 ${
-                compileStatus === "ok"
-                  ? "text-emerald-400"
-                  : compileStatus === "failed"
-                    ? "text-amber-400"
-                    : "text-zinc-500"
-              }`}
-            >
-              <StatusIcon
-                className={`h-3.5 w-3.5 ${
-                  compileStatus === "running" ? "animate-spin" : ""
-                }`}
-                aria-hidden
+          <div className="min-h-0 flex-1 overflow-auto">
+            {tab === "compiled" && (
+              <CompilePanel
+                result={result}
+                running={compiling}
+                onCompile={() => void compile()}
+                onOpenLocation={(path, line) => void openAt(path, line)}
               />
-              {statusLabel}
-            </span>
-            {pdfAvailable && (
-              <a
-                href={pdfUrl(projectId, "main.pdf")}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-sky-400 hover:underline"
-              >
-                Open PDF
-                <ExternalLink className="h-3 w-3" aria-hidden />
-              </a>
             )}
-          </div>
-          <div className="flex-1 min-h-0 overflow-auto">
-            {rightTab === "compiled" && (
-              <div className="h-full flex flex-col bg-zinc-800/30">
-                {pdfAvailable ? (
-                  <>
-                    {previewUrls.length > 0 ? (
-                      <div className="p-3 space-y-3 overflow-auto">
-                        {previewUrls.map((u) => (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            key={u}
-                            src={u}
-                            alt="Compiled page"
-                            className="w-full shadow-lg border border-zinc-700 bg-white"
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <iframe
-                        title="Compiled document"
-                        className="w-full flex-1 min-h-[480px] bg-white"
-                        src={pdfUrl(projectId, "main.pdf")}
-                      />
-                    )}
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-sm text-zinc-500 px-6 text-center gap-3">
-                    <p>Your document preview appears here after a successful compile.</p>
-                    <button
-                      type="button"
-                      onClick={() => void onCompile()}
-                      className="text-sky-400 hover:underline"
-                    >
-                      Compile now
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            {rightTab === "info" && (
-              <div className="p-4 text-sm text-zinc-400 space-y-2">
-                <h2 className="text-zinc-100 font-medium">Project Info</h2>
-                <p>{projectName}</p>
-                <p className="text-xs text-zinc-600">
-                  Local project. Name and files live on this machine only.
-                </p>
-              </div>
-            )}
-            {rightTab === "versions" && (
-              <div className="p-4 text-sm text-zinc-400 space-y-2">
-                <h2 className="text-zinc-100 font-medium">Versions</h2>
-                <p>
-                  Version history is not available in this local build. Save
-                  copies of the project folder if you need snapshots.
-                </p>
-              </div>
-            )}
-            {rightTab === "comments" && (
-              <div className="p-4 text-sm text-zinc-400 space-y-2">
-                <h2 className="text-zinc-100 font-medium">Comments</h2>
-                <p>
-                  Comments are not available. This is a single-user local
-                  workspace — there is no shared review thread.
-                </p>
-              </div>
-            )}
-            {rightTab === "logs" && (
-              <div className="p-3 overflow-auto h-full">
-                {compileStatus === "ok" && (
-                  <p className="text-sm text-emerald-400 mb-3">
-                    Build finished successfully.
-                  </p>
-                )}
-                {compileStatus === "failed" && (
-                  <p className="text-sm text-amber-400 mb-3">
-                    Build failed. Details below may help fix the document.
-                  </p>
-                )}
-                <p className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">
-                  Agent and compile traces
-                </p>
-                {logEntries.length === 0 && !log && (
-                  <p className="text-sm text-zinc-500">
-                    Compile or ask the agent — traces show up here so you can
-                    paste a trace id.
-                  </p>
-                )}
-                <ul className="space-y-1 mb-3">
-                  {logEntries.map((entry) => {
-                    const ok =
-                      entry.kind === "agent"
-                        ? entry.verified !== false
-                        : entry.success !== false;
-                    const label =
-                      entry.kind === "agent"
-                        ? `agent ${entry.rollback ? "rolled back" : ok ? "verified" : "failed"}`
-                        : entry.kind === "compile"
-                          ? `compile ${ok ? "ok" : "failed"}`
-                          : entry.kind || "log";
-                    return (
-                      <li key={entry.log_id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOpenLogId(entry.log_id);
-                            void getLog(projectId, entry.log_id).then((full) => {
-                              setLog(String(full.log || ""));
-                            });
-                          }}
-                          className={`w-full text-left text-xs px-2 py-1.5 rounded border ${
-                            openLogId === entry.log_id
-                              ? "border-zinc-500 bg-zinc-800/80 text-zinc-100"
-                              : "border-zinc-800 text-zinc-400 hover:bg-zinc-800/40"
-                          }`}
-                        >
-                          <span className={ok ? "text-emerald-400" : "text-amber-400"}>
-                            {label}
-                          </span>
-                          <span className="block font-mono text-[10px] text-zinc-500 truncate">
-                            {entry.log_id}
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-                {log ? (
-                  <details open className="text-xs">
-                    <summary className="cursor-pointer text-zinc-400 mb-2">
-                      Show technical log
-                    </summary>
-                    <pre className="text-[10px] text-zinc-500 whitespace-pre-wrap font-mono leading-relaxed">
-                      {log}
-                    </pre>
-                  </details>
-                ) : null}
-              </div>
+            {tab === "logs" && <LogsPanel projectId={projectId} logs={logs} />}
+            {tab === "info" && project && (
+              <ProjectSettings
+                key={`${project.name}\n${project.root_file}\n${project.engine}`}
+                project={project}
+                texFiles={texFiles}
+                onSaved={setProject}
+              />
             )}
           </div>
         </aside>

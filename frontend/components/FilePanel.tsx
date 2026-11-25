@@ -10,53 +10,43 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { FileCodeCorner, FileText, Folder, Pencil, Trash, Upload } from "lucide-react";
 import {
-  FileCode2,
-  FileText,
-  Folder,
-  Pencil,
-  Trash2,
-  Upload,
-} from "lucide-react";
-import {
-  TreeNode,
   deleteFiles,
+  errorMessage,
   renameFile,
-  uploadFiles,
+  uploadFile,
+  type DirNode,
+  type TreeNode,
 } from "@/lib/api";
+import { filePaths } from "@/lib/tree";
 
-function fileIcon(name: string) {
-  if (/\.(tex|bib|sty|cls)$/i.test(name)) return FileCode2;
-  return FileText;
+function folderLabel(folder: string): string {
+  return folder ? `“${folder}”` : "the project root";
 }
 
-function flattenFiles(node: TreeNode, acc: string[] = []): string[] {
-  if (node.type === "file" && node.path) acc.push(node.path);
-  for (const c of node.children || []) flattenFiles(c, acc);
-  return acc;
-}
-
-type MenuState = {
-  x: number;
-  y: number;
-  paths: string[];
-};
+type MenuState =
+  | { x: number; y: number; type: "files"; paths: string[] }
+  | { x: number; y: number; type: "folder"; folder: string };
 
 type Props = {
   projectId: string;
-  tree: TreeNode | null;
+  tree: DirNode | null;
   openPath: string | null;
+  /** The open file's path while it has unsaved changes, so a delete can say so. */
+  unsavedPath: string | null;
   onOpen: (path: string) => void;
   onRefresh: () => Promise<unknown>;
-  onDeleted?: (paths: string[]) => void;
-  onRenamed?: (from: string, to: string) => void;
-  onError?: (message: string) => void;
+  onDeleted: (paths: string[]) => void;
+  onRenamed: (from: string, to: string) => void;
+  onError: (message: string) => void;
 };
 
 export function FilePanel({
   projectId,
   tree,
   openPath,
+  unsavedPath,
   onOpen,
   onRefresh,
   onDeleted,
@@ -69,9 +59,10 @@ export function FilePanel({
   const [dropFolder, setDropFolder] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const lastClicked = useRef<string | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const uploadInput = useRef<HTMLInputElement>(null);
+  const uploadFolder = useRef("");
 
-  const flat = useMemo(() => (tree ? flattenFiles(tree) : []), [tree]);
+  const flat = useMemo(() => (tree ? filePaths(tree) : []), [tree]);
 
   useEffect(() => {
     const close = () => setMenu(null);
@@ -83,14 +74,9 @@ export function FilePanel({
     };
   }, []);
 
-  const selectOnly = useCallback((path: string) => {
-    setSelected(new Set([path]));
-    lastClicked.current = path;
-  }, []);
-
   const onFileClick = useCallback(
-    (path: string, e: ReactMouseEvent) => {
-      if (e.metaKey || e.ctrlKey) {
+    (path: string, event: ReactMouseEvent) => {
+      if (event.metaKey || event.ctrlKey) {
         setSelected((prev) => {
           const next = new Set(prev);
           if (next.has(path)) next.delete(path);
@@ -100,7 +86,7 @@ export function FilePanel({
         lastClicked.current = path;
         return;
       }
-      if (e.shiftKey && lastClicked.current && flat.length) {
+      if (event.shiftKey && lastClicked.current) {
         const a = flat.indexOf(lastClicked.current);
         const b = flat.indexOf(path);
         if (a >= 0 && b >= 0) {
@@ -109,16 +95,17 @@ export function FilePanel({
           return;
         }
       }
-      selectOnly(path);
+      setSelected(new Set([path]));
+      lastClicked.current = path;
       onOpen(path);
     },
-    [flat, onOpen, selectOnly],
+    [flat, onOpen],
   );
 
-  const openContextMenu = useCallback(
-    (path: string, e: ReactMouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+  const openFileMenu = useCallback(
+    (path: string, event: ReactMouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
       let paths: string[];
       if (selected.has(path) && selected.size > 1) {
         paths = Array.from(selected);
@@ -126,124 +113,119 @@ export function FilePanel({
         paths = [path];
         setSelected(new Set([path]));
       }
-      setMenu({ x: e.clientX, y: e.clientY, paths });
+      setMenu({ x: event.clientX, y: event.clientY, type: "files", paths });
     },
     [selected],
   );
 
+  const openFolderMenu = useCallback((folder: string, event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenu({ x: event.clientX, y: event.clientY, type: "folder", folder });
+  }, []);
+
   const doDelete = useCallback(
     async (paths: string[]) => {
       if (!paths.length) return;
-      const label =
-        paths.length === 1
-          ? `Delete “${paths[0]}”?`
-          : `Delete ${paths.length} files?`;
-      if (!confirm(label)) return;
-      setBusy(true);
       setMenu(null);
+      let question = paths.length === 1 ? `Delete “${paths[0]}”?` : `Delete ${paths.length} files?`;
+      if (unsavedPath && paths.includes(unsavedPath)) {
+        question += ` Your unsaved changes to “${unsavedPath}” will be lost too.`;
+      }
+      if (!window.confirm(question)) return;
+      setBusy(true);
       try {
-        const res = await deleteFiles(projectId, paths);
-        if (res.errors?.length) {
-          onError?.(
-            res.errors.map((e) => `${e.path}: ${e.message}`).join("; "),
-          );
+        const result = await deleteFiles(projectId, paths);
+        if (result.errors.length) {
+          onError(result.errors.map((e) => `${e.path}: ${e.message}`).join("; "));
         }
         setSelected(new Set());
-        onDeleted?.(res.deleted || paths);
+        onDeleted(result.deleted);
         await onRefresh();
-      } catch (err) {
-        onError?.(err instanceof Error ? err.message : String(err));
+      } catch (error) {
+        onError(errorMessage(error));
       } finally {
         setBusy(false);
       }
     },
-    [projectId, onDeleted, onError, onRefresh],
+    [projectId, unsavedPath, onDeleted, onError, onRefresh],
   );
 
   const doRename = useCallback(
     async (path: string) => {
       setMenu(null);
       const base = path.split("/").pop() || path;
-      const parent = path.includes("/")
-        ? path.slice(0, path.lastIndexOf("/") + 1)
-        : "";
-      const next = window.prompt("Rename file", base);
-      if (next == null) return;
-      const trimmed = next.trim();
-      if (!trimmed || trimmed === base) return;
-      if (trimmed.includes("/") || trimmed.includes("\\") || trimmed === "..") {
-        onError?.("Name cannot contain path separators.");
+      const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+      const next = window.prompt("Rename file", base)?.trim();
+      if (!next || next === base) return;
+      if (next.includes("/") || next.includes("\\")) {
+        onError("A file name cannot contain / or \\.");
         return;
       }
-      const toPath = `${parent}${trimmed}`;
+      const to = `${parent}${next}`;
       setBusy(true);
       try {
-        await renameFile(projectId, path, toPath);
-        setSelected(new Set([toPath]));
-        onRenamed?.(path, toPath);
+        await renameFile(projectId, path, to);
+        setSelected(new Set([to]));
+        onRenamed(path, to);
         await onRefresh();
-        onOpen(toPath);
-      } catch (err) {
-        onError?.(err instanceof Error ? err.message : String(err));
+      } catch (error) {
+        onError(errorMessage(error));
       } finally {
         setBusy(false);
       }
     },
-    [projectId, onError, onOpen, onRefresh, onRenamed],
+    [projectId, onError, onRefresh, onRenamed],
   );
 
   const doUpload = useCallback(
-    async (files: FileList | File[], folder?: string | null) => {
+    async (files: FileList | File[], folder: string) => {
       const list = Array.from(files);
+      setDragOver(false);
+      setDropFolder(null);
       if (!list.length) return;
       setBusy(true);
       try {
-        await uploadFiles(
-          projectId,
-          list,
-          folder || "prism-uploads",
-        );
-        await onRefresh();
-      } catch (err) {
-        onError?.(err instanceof Error ? err.message : String(err));
+        for (const file of list) await uploadFile(projectId, file, folder);
+      } catch (error) {
+        onError(errorMessage(error));
       } finally {
+        await onRefresh().catch(() => undefined);
         setBusy(false);
-        setDragOver(false);
-        setDropFolder(null);
       }
     },
     [projectId, onError, onRefresh],
   );
 
+  const pickUploads = useCallback((folder: string) => {
+    setMenu(null);
+    uploadFolder.current = folder;
+    uploadInput.current?.click();
+  }, []);
+
   const onDrop = useCallback(
-    (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const files = e.dataTransfer.files;
-      if (files?.length) {
-        void doUpload(files, dropFolder);
-      } else {
-        setDragOver(false);
-        setDropFolder(null);
-      }
+    (event: DragEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void doUpload(event.dataTransfer.files, dropFolder ?? "");
     },
     [doUpload, dropFolder],
   );
 
-  function renderTree(node: TreeNode, depth: number): ReactNode {
+  function renderNode(node: TreeNode, depth: number): ReactNode {
     if (node.type === "file") {
-      const Icon = fileIcon(node.name);
-      const isSel = selected.has(node.path);
+      const Icon = node.kind === "source" ? FileCodeCorner : FileText;
+      const isSelected = selected.has(node.path);
       const isOpen = openPath === node.path;
       return (
         <button
           key={node.path}
           type="button"
           style={{ paddingLeft: 10 + depth * 12 }}
-          onClick={(e) => onFileClick(node.path, e)}
-          onContextMenu={(e) => openContextMenu(node.path, e)}
-          className={`flex w-full items-center gap-1.5 text-left py-1 text-sm truncate rounded-sm ${
-            isSel
+          onClick={(event) => onFileClick(node.path, event)}
+          onContextMenu={(event) => openFileMenu(node.path, event)}
+          className={`flex w-full items-center gap-1.5 truncate rounded-sm py-1 text-left text-sm ${
+            isSelected
               ? "bg-sky-950/60 text-sky-100 ring-1 ring-sky-800/80"
               : isOpen
                 ? "bg-zinc-800 text-zinc-50"
@@ -256,152 +238,147 @@ export function FilePanel({
       );
     }
 
-    const folderPath = node.path;
+    const folder = node.path;
     return (
-      <div key={node.path || node.name || "root"}>
-        {node.path !== "" && (
+      <div key={folder || "/"}>
+        {folder !== "" && (
           <div
             style={{ paddingLeft: 10 + depth * 12 }}
-            className={`flex items-center gap-1.5 py-1 text-xs font-medium rounded-sm ${
-              dropFolder === folderPath
-                ? "bg-sky-900/40 text-sky-200"
-                : "text-zinc-500"
+            className={`flex items-center gap-1.5 rounded-sm py-1 text-xs font-medium ${
+              dropFolder === folder ? "bg-sky-900/40 text-sky-200" : "text-zinc-500"
             }`}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setDropFolder(folderPath);
+            onContextMenu={(event) => openFolderMenu(folder, event)}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setDropFolder(folder);
               setDragOver(true);
             }}
             onDragLeave={() => {
-              if (dropFolder === folderPath) setDropFolder(null);
+              if (dropFolder === folder) setDropFolder(null);
             }}
-            onDrop={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              const files = e.dataTransfer.files;
-              if (files?.length) void doUpload(files, folderPath);
-              setDragOver(false);
-              setDropFolder(null);
+            onDrop={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void doUpload(event.dataTransfer.files, folder);
             }}
           >
             <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
             {node.name}
           </div>
         )}
-        {(node.children || []).map((c) =>
-          renderTree(c, node.path === "" ? depth : depth + 1),
-        )}
+        {node.children.map((child) => renderNode(child, folder === "" ? depth : depth + 1))}
       </div>
     );
   }
 
   const selectionCount = selected.size;
+  const menuItem = "flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800";
 
   return (
     <div
-      ref={panelRef}
-      className={`flex flex-col h-full min-h-0 relative ${
-        dragOver ? "bg-sky-950/20" : ""
-      }`}
-      onDragEnter={(e) => {
-        e.preventDefault();
+      className={`relative flex h-full min-h-0 flex-col ${dragOver ? "bg-sky-950/20" : ""}`}
+      onDragEnter={(event) => {
+        event.preventDefault();
         setDragOver(true);
       }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
       }}
-      onDragLeave={(e) => {
-        if (e.currentTarget === e.target) {
+      onDragLeave={(event) => {
+        if (event.currentTarget === event.target) {
           setDragOver(false);
           setDropFolder(null);
         }
       }}
       onDrop={onDrop}
     >
-      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-zinc-800 text-[10px] text-zinc-500">
+      <div className="flex items-center gap-1 border-b border-zinc-800 px-2 py-1.5 text-[10px] text-zinc-500">
         <span className="flex-1 truncate">
-          {selectionCount > 1
-            ? `${selectionCount} selected`
-            : "Click · Ctrl+click · Shift · Right-click"}
+          {selectionCount > 1 ? `${selectionCount} selected` : "Click · Ctrl+click · Shift · Right-click"}
         </span>
-        <label
-          className={`inline-flex items-center gap-1 cursor-pointer hover:text-zinc-300 ${
-            busy ? "opacity-50 pointer-events-none" : ""
-          }`}
-          title="Upload files"
+        <button
+          type="button"
+          className="p-0.5 hover:text-zinc-300 disabled:opacity-50"
+          title="Upload files to the project root"
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            pickUploads("");
+          }}
         >
           <Upload className="h-3.5 w-3.5" aria-hidden />
-          <input
-            type="file"
-            multiple
-            className="hidden"
-            disabled={busy}
-            onChange={(e) => {
-              if (e.target.files?.length) void doUpload(e.target.files);
-              e.target.value = "";
-            }}
-          />
-        </label>
+          <span className="sr-only">Upload files</span>
+        </button>
         {selectionCount > 0 && (
           <button
             type="button"
-            className="hover:text-red-400 p-0.5"
+            className="p-0.5 hover:text-red-400 disabled:opacity-50"
             title="Delete selected"
             disabled={busy}
             onClick={() => void doDelete(Array.from(selected))}
           >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+            <Trash className="h-3.5 w-3.5" aria-hidden />
+            <span className="sr-only">Delete selected</span>
           </button>
         )}
+        <input
+          ref={uploadInput}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            const files = event.target.files;
+            if (files?.length) void doUpload(Array.from(files), uploadFolder.current);
+            event.target.value = "";
+          }}
+        />
       </div>
 
-      <div className="flex-1 overflow-auto py-1 px-0.5">
-        {tree ? (
-          renderTree(tree, 0)
-        ) : (
-          <p className="px-2 text-xs text-zinc-600">Loading…</p>
-        )}
+      <div className="flex-1 overflow-auto px-0.5 py-1">
+        {tree ? renderNode(tree, 0) : <p className="px-2 text-xs text-zinc-600">Loading…</p>}
       </div>
 
       {dragOver && (
-        <div className="pointer-events-none absolute inset-0 border-2 border-dashed border-sky-500/60 rounded-sm flex items-center justify-center bg-sky-950/30 z-10">
-          <div className="flex flex-col items-center gap-1 text-sky-200 text-xs">
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-sm border-2 border-dashed border-sky-500/60 bg-sky-950/30">
+          <div className="flex flex-col items-center gap-1 text-xs text-sky-200">
             <Upload className="h-6 w-6" aria-hidden />
-            <span>
-              Drop to upload
-              {dropFolder ? ` into ${dropFolder}` : " (prism-uploads)"}
-            </span>
+            <span>Drop to upload into {folderLabel(dropFolder ?? "")}</span>
           </div>
         </div>
       )}
 
       {menu && (
         <div
-          className="fixed z-50 min-w-[160px] rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl py-1 text-sm"
+          className="fixed z-50 min-w-[160px] rounded-lg border border-zinc-700 bg-zinc-900 py-1 text-sm shadow-xl"
           style={{ left: menu.x, top: menu.y }}
-          onClick={(e) => e.stopPropagation()}
-          onContextMenu={(e) => e.preventDefault()}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
         >
-          {menu.paths.length === 1 && (
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800"
-              onClick={() => void doRename(menu.paths[0])}
-            >
-              <Pencil className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
-              Rename
+          {menu.type === "folder" ? (
+            <button type="button" className={menuItem} onClick={() => pickUploads(menu.folder)}>
+              <Upload className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+              Upload files here
             </button>
+          ) : (
+            <>
+              {menu.paths.length === 1 && (
+                <button type="button" className={menuItem} onClick={() => void doRename(menu.paths[0])}>
+                  <Pencil className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                  Rename
+                </button>
+              )}
+              <button
+                type="button"
+                className={`${menuItem} text-red-300`}
+                onClick={() => void doDelete(menu.paths)}
+              >
+                <Trash className="h-3.5 w-3.5" aria-hidden />
+                Delete{menu.paths.length > 1 ? ` (${menu.paths.length})` : ""}
+              </button>
+            </>
           )}
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800 text-red-300"
-            onClick={() => void doDelete(menu.paths)}
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden />
-            Delete{menu.paths.length > 1 ? ` (${menu.paths.length})` : ""}
-          </button>
         </div>
       )}
     </div>
