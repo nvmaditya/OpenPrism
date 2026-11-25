@@ -47,7 +47,7 @@ _ENGINE_TOOL: Mapping[Engine, str] = {
     "lualatex": "lualatex",
 }
 # The programs latexmk starts besides the engine. biber is special: it is
-# routed through the guard (see _biber_command), not run directly.
+# routed through the guard (see _biber_assignment), not run directly.
 HELPER_TOOLS = ("bibtex", "makeindex", "kpsewhich")
 RESOLVED_TOOLS = ("pdflatex", "xelatex", "lualatex", "biber", *HELPER_TOOLS)
 
@@ -104,16 +104,35 @@ def resolve_tools(path_env: str | None) -> dict[str, str]:
     return resolved
 
 
+# What latexmk runs for biber when the guard cannot be named safely in its
+# command (a Python path with a space or a shell character, as under
+# `C:\Program Files` on Windows). latexmk's NONE keyword runs nothing and fails
+# the biber rule, so biber is unavailable rather than run unguarded.
+BIBER_UNAVAILABLE = (
+    "NONE biber is unavailable because the PrismTeX biber guard cannot be run "
+    "from a Python path that contains a space or a shell character"
+)
+
+
+def _biber_assignment() -> list[str]:
+    """The `-e` assignment that routes biber through the guard, or disables it.
+
+    It is always emitted: leaving `$biber` unset would let latexmk run the real
+    biber, which executes code from a crafted .bcf (see biberguard.py).
+    """
+    python = sys.executable.replace("\\", "/")
+    if python and is_shell_safe_name(python) and " " not in python:
+        return ["-e", f"$biber=q{{{python} -P -m prismtex.compile.biberguard %O %S}}"]
+    return ["-e", f"$biber=q{{{BIBER_UNAVAILABLE}}}"]
+
+
 def _tool_assignments(tools: Mapping[str, str]) -> list[str]:
     """`-e` assignments that pin biber (to the guard) and the helper tools by path.
 
     The `%O`/`%S`/`%D` placeholders are latexmk's own and are meant literally;
     only the program paths are checked (they must sit safely in the command).
     """
-    out: list[str] = []
-    python = sys.executable.replace("\\", "/")
-    if is_shell_safe_name(python) and " " not in python:
-        out += ["-e", f"$biber=q{{{python} -P -m prismtex.compile.biberguard %O %S}}"]
+    out: list[str] = [*_biber_assignment()]
     for name, template in (("bibtex", "{cmd} %O %S"), ("makeindex", "{cmd} %O -o %D %S")):
         cmd = tools.get(name)
         if cmd is not None:
