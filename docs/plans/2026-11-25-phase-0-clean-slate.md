@@ -3,6 +3,7 @@
 - **Date:** 2026-11-25
 - **Implements:** revamp design §9 Phase 0 (`docs/design/2026-11-24-revamp-design.md`) and the "Starting point (Phase 0)" line of `docs/design/2026-11-24-agent-design.md`, decisions D5, D7, D11, D12, D13, D16 and §6.3, §6.6, §6.7, §8.
 - **Outcome:** safe to run, honest, licensed, renamed, CI green; the old agent retired so the Phase 1 agent is built on a clean base. No release is cut at the end of Phase 0.
+- **Amended:** 2026-11-25, after the implementation review. The review found that the argv and environment hardening of §11.1 does not stop TeX from reading files outside the project (pdfTeX `\pdfobj ... file`, LuaLaTeX's Lua layer, Biber), and that Biber runs code from a crafted `.bcf`. This spec now describes the result: body limits, a `.fls` read audit, a Biber guard, lualatex refused at compile time, and the smaller fixes listed in the sections below. An OS-level compile sandbox is the real fix; it is a new system dependency, so it is a tracked follow-up, not Phase 0.
 
 ## 0. Maintainer decisions taken for this phase
 
@@ -139,6 +140,9 @@ class AppError(Exception):
 | `RootFileInvalid` | `root_file_invalid` | 422 | `field="root_file"`, `reason` |
 | `ImportRejected` | `import_rejected` | 400 | `reason`: `bad_zip`, `zip_slip`, `symlink`, `too_large`, `too_many_files`, `ratio`, `empty` |
 | `PayloadTooLarge` | `payload_too_large` | 413 | `limit_mb` |
+| `FileBusy` | `file_busy` | 409 | `path` (another process, such as TeX on Windows, holds the file) |
+| `ProjectBusy` | `project_busy` | 409 | `project_id` (a compile of the project is running) |
+| `UnsafeProjectFile` | `unsafe_project_file` | 409 | `path` (a project-root file Windows could run as a tool) |
 | `LogNotFound` | `log_not_found` | 404 | `log_id` |
 | `PdfNotFound` | `pdf_not_found` | 404 | |
 
@@ -152,7 +156,9 @@ One pure ASGI middleware (no `BaseHTTPMiddleware`, so streaming is unaffected), 
 2. **Access token.** Only when `settings.access_token` is set. Every request except `GET /api/health` needs `Authorization: Bearer <token>` or the cookie `prismtex_token=<token>`, compared with `hmac.compare_digest`. Otherwise 401 `unauthorized` with `WWW-Authenticate: Bearer`.
 3. **Origin.** For methods other than GET, HEAD and OPTIONS: if `Origin` is present it must be an origin whose hostname is a loopback name (any port), or one listed in `settings.allowed_origins`; `Origin: null` is rejected. If `Origin` is absent and `Sec-Fetch-Site` is `cross-site`, reject. Otherwise allow (non-browser clients). Rejections are 403 `origin_not_allowed`.
 
-No CORS middleware. FastAPI docs move to `/api/docs` and `/api/openapi.json` so they are reachable through the UI proxy.
+No CORS middleware. FastAPI docs move to `/api/docs` and `/api/openapi.json` so they are reachable through the UI proxy; the OAuth2 redirect helper is turned off, since there is no OAuth2 scheme and it would sit outside `/api`.
+
+**Body limits.** A second pure ASGI middleware, `BodyLimitMiddleware`, sits inside the security middleware, so Host, token and Origin are checked before any body is read. It caps request bodies by route: `POST /api/projects/import` at `import_max_mb + 1` MB, any `.../upload` at `max_upload_mb + 1` MB, every other route at 64 MB. A declared `Content-Length` over the cap is refused at once; a streamed body is counted and refused when it passes the cap. Both answer 413 `payload_too_large`.
 
 ## 7. CLI (`prismtex.cli`)
 
@@ -160,6 +166,7 @@ No CORS middleware. FastAPI docs move to `/api/docs` and `/api/openapi.json` so 
 
 - builds `Settings()`, applying `--host` and `--port`;
 - if the host is not loopback and no access token is set, prints `Refusing to bind <host> without PRISMTEX_ACCESS_TOKEN. Set a token, or bind 127.0.0.1.` to stderr and exits with status 2;
+- on Linux, calls `prctl(PR_SET_DUMPABLE, 0)` so a TeX run under the same uid cannot read `/proc/<server pid>/environ` (this does not help when the server runs as root);
 - otherwise runs `uvicorn.run(create_app(settings), host=..., port=..., workers=1, proxy_headers=False, server_header=False)`.
 
 `main(argv: list[str] | None = None) -> int`. Tests monkeypatch `uvicorn.run`.
@@ -174,7 +181,7 @@ def check_relative_path(path: str) -> str: ...       # normalized POSIX relative
 def resolve_in(root: Path, rel: str) -> Path: ...    # check_relative_path + resolve + containment (symlink escape)
 ```
 
-`check_relative_path` converts `\` to `/`, drops `./` and empty segments, then rejects (each with a `reason`): empty; absolute POSIX (`/x`); Windows drive (`C:\x`, `C:/x`) and drive-relative (`C:x`); UNC (`\\server\share`, `//server`); any `..` segment; NUL or any C0 control character; any of `<>:"|?*` (`:` also covers alternate data streams like `main.tex:ads`); Windows device names `CON PRN AUX NUL COM0-9 LPT0-9` (case-insensitive, with or without any extension, e.g. `con.tex`, `Com1.txt`); segments ending in `.` or space; segments longer than 255 characters; whole paths longer than 240 characters.
+`check_relative_path` converts `\` to `/`, drops `./` and empty segments, then rejects (each with a `reason`): empty; absolute POSIX (`/x`); Windows drive (`C:\x`, `C:/x`) and drive-relative (`C:x`); UNC (`\\server\share`, `//server`); any `..` segment; NUL or any C0 control character; any of `<>:"|?*` (`:` also covers alternate data streams like `main.tex:ads`); Windows device names `CON PRN AUX NUL CONIN$ CONOUT$ COM0-9 LPT0-9` (case-insensitive, matched against the part before the first `.` with trailing spaces removed, so `con.tex`, `Com1.txt` and `con .tex` are all refused); segments ending in `.` or space; segments longer than 255 bytes in UTF-8 (which also keeps them within 255 UTF-16 units for NTFS and APFS); whole paths longer than 240 characters.
 
 `ProjectStore` additionally refuses (for every file-API operation) paths whose first segment is `.git` or `.prism`, case-insensitive, with reason `internal`.
 
@@ -250,6 +257,8 @@ class ProjectStore:
 - **`upload`:** `filename` is reduced to its basename (after `\` to `/`), then checked; it lands at `<folder>/<basename>` (`folder` "" = project root) and may overwrite an existing file. Over `max_upload_bytes` raises `PayloadTooLarge`.
 - **`tree` node:** `{"name", "path", "type": "dir"}` with `children`, or `{"name", "path", "type": "file", "size", "kind"}`; directories first, then case-insensitive names; `.git` and `.prism` hidden. The root node's `path` is `""` and its name is the project name.
 - **Concurrency:** one `threading.RLock` per project id guards `project.json` read-modify-writes and the version check plus write.
+- **Temp files:** atomic writes use a temp file named `.prismtex-*.tmp` in the target's folder. That name is reserved: it is hidden from listings and the tree, and the file API refuses it.
+- **Busy files and long names:** `os.replace`, rename and unlink retry a Windows sharing violation 10 times, 50 ms apart, then raise `FileBusy` (409) instead of a 500. A name the file system finds too long (`ENAMETOOLONG`) raises `PathPolicyError` (400) instead of a 500.
 
 ### 8.4 ZIP import (`zipimport.py`)
 
@@ -259,6 +268,8 @@ Before extracting anything:
 - Any entry that is a symlink (Unix mode `S_IFLNK` in `external_attr >> 16`): reason `symlink`.
 - Any entry whose name fails `check_relative_path` (after stripping a trailing `/` for directories): reason `zip_slip`.
 - Skipped silently: `__MACOSX/` entries, `.DS_Store`, any path with a `.git` segment, and directory entries.
+- The entry count is read from the end-of-central-directory record (and the ZIP64 record when the 16-bit count is `0xFFFF`) before the central directory is parsed, so an archive with millions of entries is refused without loading them: `too_many_files`.
+- A file whose path matches a folder's path apart from letter case (for example `Figs/a.png` next to a file `figs`) is refused as `bad_zip`, since it cannot be extracted on a case-insensitive file system.
 - Total uncompressed size over the limit: `too_large`. File count over the limit: `too_many_files`. Any entry with `file_size / max(compress_size, 1) > 100` and `file_size > 1 MiB`: `ratio`. No files left: `empty`.
 - **Top-folder strip:** if every remaining file shares one first segment, it is removed.
 - **`detect_root_file(paths, read_text) -> str | None`:** candidates are `.tex` files whose text contains an uncommented `\documentclass`; prefer `main.tex`, then the fewest path segments, then alphabetical. `None` if none.
@@ -321,21 +332,30 @@ class Compiler:
         # no lock; used by compile() and by Phase 1 scratch compiles
     def logs(self, project_id: str) -> list[dict]        # newest first, metadata only
     def get_log(self, project_id: str, log_id: str) -> dict   # metadata + "log"; LogNotFound
+    def is_compiling(self, project_id: str) -> bool      # non-blocking; used to refuse DELETE during a compile
 ```
+
+`compile_dir` refuses `lualatex` before latexmk runs: status `unavailable`, one diagnostic of kind `engine_disabled`, "LaTeX engine lualatex is disabled in this release because it cannot yet be run safely on untrusted input. Use pdflatex or xelatex; lualatex will come back once compiles run in a sandbox." `PATCH` still stores `lualatex` as the project's engine. On every platform it also refuses (409 `unsafe_project_file`) a project whose root folder holds a file with an executable extension (`.exe`, `.bat`, `.cmd`, `.ps1`, ...) or an extensionless file named after a tool latexmk or kpathsea starts, because Windows can run such a file from the working directory.
 
 ### 11.1 argv and environment (`argv.py`, pure, unit-tested)
 
 `build_latexmk_argv(root_file: str, engine: Engine, out_dir: Path) -> list[str]`:
 
 ```
-latexmk -norc <engine flag> -interaction=nonstopmode -file-line-error -synctex=1 -no-shell-escape -outdir=<out_dir absolute> <root_file>
+latexmk -norc <engine flag> <engine path flag> -e <tool assignment>... -interaction=nonstopmode -file-line-error -synctex=1 -no-shell-escape -outdir=<out_dir absolute> <root_file>
 ```
 
-Engine flags: `pdflatex` gives `-pdf`; `xelatex` gives `-pdfxe`; `lualatex` gives `-pdflua -lualatex=lualatex --safer --nosocket %O %S` (one argv element for the `-lualatex=` value). The argv is built only here, from validated inputs; the root file never starts with `-`. There is no `-halt-on-error`, so TeX reports more than one diagnostic.
+Engine flags: `pdflatex` gives `-pdf`; `xelatex` gives `-pdfxe`; `lualatex` gives `-pdflua` with `--safer --nosocket %O %S` (kept for when the sandbox re-enables it; `compile_dir` refuses lualatex today). `resolve_tools(PATH)` finds `pdflatex`, `xelatex`, `lualatex`, `biber`, `bibtex`, `makeindex` and `kpsewhich` with `shutil.which` on the compile `PATH`, so each is named by absolute path and Windows never runs a same-named file from the project folder. The engine path flag is `-pdflatex=`, `-xelatex=` or `-lualatex=` followed by that path (one argv element). The `-e` assignments set `$bibtex`, `$makeindex` and `$kpsewhich` to their absolute paths, and always set `$biber`: to the guard, `<python> -P -m prismtex.compile.biberguard %O %S`, or, when the interpreter's path is not shell-safe or has a space, to latexmk's `NONE` keyword, so Biber is disabled rather than run unguarded. A path that is not shell-safe is refused. The argv is built only here, from validated inputs; the root file never starts with `-`. There is no `-halt-on-error`, so TeX reports more than one diagnostic.
 
-`build_tex_env(base: Mapping[str, str], out_dir: Path) -> dict[str, str]` keeps only `PATH`, `PATHEXT`, `SYSTEMROOT`/`SystemRoot`, `WINDIR`, `COMSPEC`, `TEMP`, `TMP`, `TMPDIR`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `LANG`, `LC_ALL`, `LC_CTYPE`, `MIKTEX_*`, `TEXMFHOME`, `TEXMFVAR`, `TEXMFCONFIG` from `base`, then sets `openin_any=p`, `openout_any=p`, `shell_escape=f`, `TEXMFOUTPUT=<out_dir>`, `max_print_line=10000`, `error_line=254`, `half_error_line=238`. Everything else is dropped, provider keys included: LuaTeX's `os.getenv` can read the environment, as verified on 2026-11-25.
+`build_tex_env(base: Mapping[str, str], out_dir: Path) -> dict[str, str]` keeps only `PATH`, `PATHEXT`, `SYSTEMROOT`/`SystemRoot`, `WINDIR`, `COMSPEC`, `TEMP`, `TMP`, `TMPDIR`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `LANG`, `LC_ALL`, `LC_CTYPE`, `MIKTEX_*`, `TEXMFHOME`, `TEXMFVAR`, `TEXMFCONFIG` from `base`, then sets `openin_any=p`, `openout_any=p`, `shell_escape=f`, `TEXMFOUTPUT=<out_dir>`, `max_print_line=10000`, `error_line=254`, `half_error_line=238`, `MISSFONT_LOG=0` (no `missfont.log` in the project folder), `NoDefaultCurrentDirectoryInExePath=1` (Windows), and `PYTHONPATH` set to the folder holding the `prismtex` package (so the guard runs where prismtex is not installed). Everything else is dropped, provider keys included.
 
-Verified on TeX Live 2023 (2026-11-25): with these settings, `\input{/etc/hostname}`, `\input{../x}`, `\write18` and `\openout` to an absolute path all fail; a project `latexmkrc` is ignored; with `--safer --nosocket`, LuaTeX's `io.open` read and write outside the project fail, and `os.execute` and `io.popen` do nothing; `\cite` and `\ref` resolve through bibtex with `-outdir`.
+**Biber guard (`biberguard.py`).** Biber is a separate Perl program that none of the TeX settings reach. It opens the data sources named in the `.bcf` itself, and it evaluates a data source's `datatype` as Perl, so a crafted `\addbibresource[datatype=...]` runs code. The guard parses the `.bcf` and refuses (non-zero exit) when it cannot parse it, when a data source is absolute, contains `..` or is remote, or when an attribute value is not a plain identifier. Otherwise it runs `biber --noconf` (a project `biber.conf` could otherwise redirect biber's input and output): on POSIX by replacing itself with `execv`, on Windows as a child whose exit status it returns, because Windows `exec` ends the calling process at once with status 0.
+
+**Read audit (`flsaudit.py`).** pdfTeX's `\pdfobj ... file` opens a file without the `openin_any` check and copies it into the PDF. After a pdflatex or xelatex run, `audit_inputs` reads every `out/*.fls` recorder file and resolves each `INPUT` line. A read outside the project folder, the build folder and the TeX trees (`kpsewhich -var-value=TEXMF` and the named `TEXMF*` variables, plus the standard system trees) deletes the PDF and fails the compile with an `access_denied` error. The audit runs after the fact: a read on an earlier latexmk pass that the final `.fls` does not list can be missed. It is a mitigation, not a sandbox.
+
+Before the run, `compile_dir` recreates the project's folder tree (empty, no symlinks, no internal folders) under `out_dir`, so `\include` of a file in a subfolder can write its `.aux` there.
+
+Verified on TeX Live 2023 (2026-11-25): with these settings, `\input{/etc/hostname}`, `\input{../x}`, `\write18` and `\openout` to an absolute path all fail; a project `latexmkrc` is ignored; `\cite` and `\ref` resolve through bibtex with `-outdir`. Not stopped by these settings: pdfTeX `\pdfobj ... file` reads (caught by the read audit), Biber's own reads and its `datatype` code execution (closed by the guard), and LuaLaTeX's Lua layer, which even under `--safer` reads files with `io.lines` and `io.input`, lists folders with `lfs.dir`, and can read `/proc/<pid>/environ` (so lualatex is refused).
 
 ### 11.2 Runner (`runner.py`)
 
@@ -369,12 +389,15 @@ The parser tracks the current file through the `(` and `)` file stack (a `(` not
 | `bad_box` | info | `Overfull`/`Underfull \hbox`/`\vbox` ... `at line(s) N` |
 | `bibtex_error` | error | `.blg`: `I couldn't open database file`, `I found no \bibdata command`, other `---` error lines |
 | `bibtex_warning` | warning | `.blg`: `Warning--...` |
+| `access_denied` | warning | kpathsea refused a path (`... (openin_any = p)`, including the TeX Live 2024+ `; extended check` suffix) |
 
 A warning's line comes from `on input line L` (or `at line(s) N`) and its file from the stack. An error's message is the text after `<file>:<line>: `, with the following `l.<n> ...` context line appended when present.
 
 ### 11.4 Status and output
 
-- `timed_out`: status `timeout`, with one diagnostic (kind `timeout`) saying the compile was stopped after N seconds.
+- `timed_out`: status `timeout`, with one diagnostic (kind `timeout`) saying the compile was stopped after N seconds. The log is stored but not parsed.
+- The `.log` and `.blg` are read bounded (the first 512 KiB and the last 1.5 MiB, with an omission marker), so a runaway `\message` loop cannot make the server read gigabytes.
+- A read-audit failure (§11.1) is an `access_denied` error, the PDF is deleted, and the status is `failed`.
 - Otherwise `ok` if latexmk exited 0, the PDF was written this run, and there are no error diagnostics; else `failed`.
 - `pdf_path` is set when `<out_dir>/<stem>.pdf` exists with an mtime at or after the run's start.
 - The project folder gets no build artifacts: latexmk runs with cwd = project folder and `-outdir` in `build/<id>/out`.
@@ -393,29 +416,29 @@ A warning's line comes from `on input line L` (or `at line(s) N`) and its file f
 | `POST /api/projects/import` | multipart `file`, optional `name` | 201 `ProjectInfo`; 400 `import_rejected`; 413 |
 | `GET /api/projects/{id}` | | 200 `ProjectInfo`; 404 |
 | `PATCH /api/projects/{id}` | `{"name"?: str, "root_file"?: str \| null, "engine"?: Engine}` | 200 `ProjectInfo`; 404; 422 |
-| `DELETE /api/projects/{id}` | | 204 |
+| `DELETE /api/projects/{id}` | | 204; 409 `project_busy` while a compile of the project runs |
 | `GET /api/projects/{id}/files` | | 200 `{"files": [{"path", "size", "kind"}]}` |
 | `GET /api/projects/{id}/tree?path=` | | 200 `{"tree": node}` |
 | `GET /api/projects/{id}/files/{path}` | | text: 200 `{"path", "encoding": "utf-8", "content", "version", "eol"}`; binary: 200 `{"path", "encoding": "base64", "content", "version"}`; header `ETag: "<version>"`; 404 |
-| `PUT /api/projects/{id}/files/{path}` | `{"content": str}`; optional `If-Match: "<version>"` (quotes optional) | 200 `{"path", "version", "eol"}` + `ETag`; 409 `version_conflict` with `current_version` |
+| `PUT /api/projects/{id}/files/{path}` | `{"content": str}`; optional `If-Match: "<version>"` (quotes optional) | 200 `{"path", "version", "eol"}` + `ETag`; 409 `version_conflict` with `current_version`; 409 `file_busy` |
 | `POST /api/projects/{id}/upload` | multipart `file`, optional `folder` (relative folder; "" = root) | 201 `{"path", "size", "kind"}`; 413 |
 | `POST /api/projects/{id}/files/rename` | `{"from": str, "to": str}` | 200 `{"from", "to"}`; 409 `file_exists` |
 | `POST /api/projects/{id}/files/delete` | `{"paths": [str]}` (1 to 1000) | 200 `{"deleted", "errors"}` |
 | `DELETE /api/projects/{id}/files/{path}` | | 204 |
 | `GET /api/projects/{id}/outline` | | 200 `{"outline": [item]}` |
-| `POST /api/projects/{id}/compile` | optional `{"root_file"?: str, "engine"?: Engine}` (this run only, not saved) | 200 `{"status", "ok", "diagnostics": [Diagnostic], "duration_ms", "engine", "root_file", "log_id", "pdf_url"}` where `pdf_url` is `/api/projects/{id}/pdf?v=<pdf mtime_ns>` or null; 404; 422 `root_file_missing` / `root_file_invalid` |
+| `POST /api/projects/{id}/compile` | optional `{"root_file"?: str, "engine"?: Engine}` (this run only, not saved) | 200 `{"status", "ok", "diagnostics": [Diagnostic], "duration_ms", "engine", "root_file", "log_id", "pdf_url"}` where `pdf_url` is `/api/projects/{id}/pdf?v=<pdf mtime_ns>-<log_id>` (plus `&root_file=` when the run used a root file other than the saved one) or null; 404; 409 `unsafe_project_file`; 422 `root_file_missing` / `root_file_invalid` |
 | `GET /api/projects/{id}/pdf` | | 200 `application/pdf` of the root file's PDF in `build/<id>/out/`, `Cache-Control: no-store`, `Content-Disposition: inline; filename="<stem>.pdf"`, `X-Content-Type-Options: nosniff`; 404 `pdf_not_found` |
 | `GET /api/projects/{id}/logs` | | 200 `{"logs": [meta]}` newest first |
 | `GET /api/projects/{id}/logs/{log_id}` | | 200 meta + `"log"`; 404 `log_not_found` |
 
 `ProjectInfo` JSON: `{"id", "name", "kind", "created_at", "updated_at", "root_file", "engine"}`.
 
-The compile route runs the blocking compile in a worker thread (a plain `def` route or `anyio.to_thread.run_sync`). `create_app(settings=None, *, compiler=None)` lets tests inject a fake compiler with the same `compile`, `logs` and `get_log` methods.
+The compile route runs the blocking compile in a worker thread (a plain `def` route or `anyio.to_thread.run_sync`). `create_app(settings=None, *, compiler=None)` lets tests inject a fake compiler with the same `compile`, `logs`, `get_log` and `is_compiling` methods. Any route answers 413 `payload_too_large` for a body over its cap (§6).
 
 ## 13. Frontend (Next.js 15.5.29, React 19, Tailwind 3)
 
 - **`package.json`:** `"name": "prismtex-ui"`, `"version": "0.1.0-dev.0"`, `"license": "Apache-2.0"`, `next` and `eslint-config-next` pinned to `15.5.29`; scripts `dev`, `build`, `start`, `lint` (`eslint .`, flat config), `typecheck` (`tsc --noEmit`).
-- **Same origin:** `next.config.ts` rewrites `/api/:path*` to `${process.env.PRISMTEX_API_URL ?? "http://127.0.0.1:8000"}/api/:path*` and sets `poweredByHeader: false`. `lib/api.ts` uses relative `/api/...` URLs only; `NEXT_PUBLIC_API_URL` is gone.
+- **Same origin:** `next.config.ts` rewrites `/api/:path*` to `${process.env.PRISMTEX_API_URL ?? "http://127.0.0.1:8000"}/api/:path*` and sets `poweredByHeader: false`. It also raises the rewrite proxy's limits, which would otherwise cut request bodies at 10 MB and proxied requests at 30 s: `experimental.middlewareClientMaxBodySize` is sized above the backend's largest body cap (from `PRISMTEX_MAX_UPLOAD_MB` and `PRISMTEX_IMPORT_MAX_MB` when the config loads) and `experimental.proxyTimeout` is 10 minutes (above the default 120 s compile timeout; a longer `PRISMTEX_COMPILE_TIMEOUT_S` needs this raised too). `lib/api.ts` uses relative `/api/...` URLs only; `NEXT_PUBLIC_API_URL` is gone. The UI sends no access token in Phase 0: token mode serves API clients until the Phase 4 sign-in.
 - **`lib/api.ts`:** an `ApiError` class (`status`, `code`, `message`, `detail`) parsed from the envelope. Functions follow §12. `readFile` returns `version` and `eol`; `writeFile(projectId, path, content, baseVersion?)` sends `If-Match` and throws `ApiError` with code `version_conflict` on 409. Removed: `streamChat`, `renderPreviews`, `listSkills`, `health` and every other caller of a removed route.
 - **Dashboard:** project list (name and relative created time), search, New menu (Blank, Example paper, Example résumé), Import ZIP, delete. Copy says "PrismTeX".
 - **IDE:**
@@ -427,7 +450,7 @@ The compile route runs the blocking compile in a worker thread (a plain `def` ro
   - The **Logs** tab lists compile logs, with the raw text behind a disclosure.
   - The **Project Info** tab edits the name, root file (a select of `.tex` files) and engine through `PATCH`.
   - Where the chat used to be, one quiet line: "The writing agent is being rebuilt and returns in v0.1.0."
-- **Buffer rule:** no code path overwrites a dirty buffer. Refreshing the tree or outline never reloads the open file. Save sends `If-Match` with the version the buffer was loaded from. On `version_conflict`, a bar says "This file changed on disk since you opened it." with **Reload from disk** (discards the buffer after a `confirm()`) and **Overwrite** (saves with the conflict's `current_version` as the base). Switching files with a dirty buffer asks first.
+- **Buffer rule:** no code path overwrites a dirty buffer. Refreshing the tree or outline never reloads the open file. Save sends `If-Match` with the version the buffer was loaded from. On `version_conflict`, a bar says "This file changed on disk since you opened it." with **Reload from disk** (discards the buffer after a `confirm()`) and **Overwrite** (saves with the conflict's `current_version` as the base). Switching files with a dirty buffer asks first. The IDE is its own document load (the dashboard links to it with a plain `<a href>`), so the browser's leave-page guard also covers Back, Forward and reload while the buffer is dirty.
 - **Hygiene:** delete `public/*.svg` boilerplate, `frontend/README.md` and `app/favicon.ico`; add a simple `app/icon.svg`.
 - **Gates:** `npm run lint`, `npm run typecheck` and `npm run build` pass with no errors.
 
@@ -438,7 +461,7 @@ The compile route runs the blocking compile in a worker thread (a plain `def` ro
   - `README.md` with: the pitch; a status note (pre-release, agent being rebuilt); what works today; a quickstart (native development: TeX Live or MiKTeX, Python 3.12+, Node 22, `./start.sh`; Docker arrives in Phase 4); configuration; an architecture diagram; roadmap; contributing; security; license; and a non-affiliation line ("PrismTeX is an independent project. It is not affiliated with or endorsed by OpenAI.").
   - `CONTRIBUTING.md`: setup, tests and lanes, Conventional Commits, the review-first rule for agent changes, and the neutral policy on AI-assisted contributions.
   - `CODE_OF_CONDUCT.md`: the verbatim Contributor Covenant 3.0.
-  - `SECURITY.md`: the threat model (revamp §6.6), the supported deployment shapes (localhost; LAN or Docker only with a token), and private vulnerability reporting through GitHub.
+  - `SECURITY.md`: the threat model (revamp §6.6), the supported deployment shapes (localhost; LAN or Docker only with a token, which in Phase 0 serves API clients only, with the UI's Next server kept on 127.0.0.1), what the compile hardening stops and what it only mitigates (§11.1), and private vulnerability reporting through GitHub.
   - `SUPPORT.md`; `CHANGELOG.md` (an "Unreleased" section; generated by git-cliff at release); `cliff.toml`; `ROADMAP.md` (Phases 0 to 4 with exit criteria, Phase 0 marked as in review).
   - `docs/configuration.md` (every `PRISMTEX_*` variable) and `docs/compile.md` (the hardening and what was verified, on which TeX distribution).
   - A lean contributor-facing `AGENTS.md`.
@@ -448,7 +471,7 @@ The compile route runs the blocking compile in a worker thread (a plain `def` ro
 - **`ci.yml`:**
   - Runs on `push` to `main` and `pull_request`, with `permissions: contents: read` and concurrency cancel-in-progress. Actions are pinned by full commit SHA with a `# vX.Y.Z` comment.
   - **`backend`** (matrix `ubuntu-latest`, `windows-latest`; Python 3.12): `pip install -e "backend[dev]"`, `ruff check`, `ruff format --check`, `pyright` (Ubuntu only), `pytest -m "not tex"`.
-  - **`tex`** (container `texlive/texlive:latest-small`): `tlmgr install` the packages the templates need (latexmk at least), install Python 3.12 through `astral-sh/setup-uv`, then `pytest -m tex`.
+  - **`tex`** (container `texlive/texlive:latest-small`): `tlmgr install` the packages the templates and TeX-lane tests need (latexmk, latex-bin, luatex, biber, biblatex and its dependencies, amsmath, amsfonts, graphics, booktabs, hyperref, geometry, titlesec, tools, l3kernel, l3backend, iftex), install Python 3.12 through `astral-sh/setup-uv`, then `pytest -m tex`.
   - **`frontend`** (Node 22): `npm ci`, `lint`, `typecheck`, `build`.
   - **`ci-ok`:** `needs` all jobs, `if: always()`, and fails unless every job succeeded.
 - **`start.sh`:** runs `python -m prismtex serve` with `PRISMTEX_DATA_DIR="$ROOT/data"`, waits on `/api/health`, starts the UI with `PRISMTEX_API_URL`, and binds both to 127.0.0.1. `.env.example` lists the Phase 0 variables only.
@@ -467,7 +490,9 @@ The compile route runs the blocking compile in a worker thread (a plain `def` ro
   - the CLI refusing `0.0.0.0` without a token (exit 2) and accepting it with one;
   - removed routes return 404 (`/api/projects/{id}/chat`, `/tools/run`, `/api/skills`, `/previews/render`);
   - outline;
-  - argv and env builders (no secrets, the flags of §11.1, `--safer --nosocket` for lualatex);
+  - argv and env builders (no secrets, the flags of §11.1, tools by absolute path, `$biber` always set: the guard, or `NONE` when the interpreter path is unsafe);
+  - the body limit (413 on a declared or streamed body over the cap, checked after Host/token/Origin), the ZIP entry count from the central directory, case-clashing ZIP entries, UTF-8 byte segment limits and spaced device names, the reserved temp name, `file_busy` and `project_busy`;
+  - the Biber guard's `.bcf` checks (absolute, `..`, remote, unsafe attribute values, an unparsable or missing file), that it runs `biber --noconf`, and that on Windows it waits for biber and returns its status;
   - log-parser tables over real log fixtures;
   - the runner kills a process tree on timeout (a Python child that spawns a sleeping grandchild) and caps output;
   - compile API routes with an injected fake compiler.
@@ -476,8 +501,11 @@ The compile route runs the blocking compile in a worker thread (a plain `def` ro
   - the project folder is byte-identical before and after a compile (no artifacts);
   - `\input{/etc/hostname}` (or a Windows equivalent), `\input{../outside}`, `\write18` and an absolute `\openout` are all blocked;
   - a project `latexmkrc` is ignored;
-  - lualatex `io.open` outside is blocked, and a secret environment variable is not visible to `os.getenv`;
-  - an infinite loop times out and the process tree is gone;
+  - lualatex is refused at compile time (`unavailable`, `engine_disabled`), and a direct probe records that its Lua layer can still read outside the project (a canary: if a later TeX Live closes it, the test says so);
+  - pdfTeX `\pdfobj ... file` of an absolute or `..` path is caught by the read audit and the PDF is discarded, while a `\pdfobj` of a project file still compiles;
+  - biblatex with Biber builds its bibliography through the guard; an absolute `\addbibresource` is refused; a crafted `datatype` executes nothing, also when Biber is disabled by the `NONE` fallback;
+  - `\include` of a file in a subfolder compiles, and a missing font leaves no `missfont.log`;
+  - an infinite loop times out and the process tree is gone, and a runaway log times out without being parsed;
   - an undefined control sequence in `sections/x.tex` yields a diagnostic with that file and line;
   - an undefined citation yields `undefined_citation`;
   - `GET /pdf` serves the result.
