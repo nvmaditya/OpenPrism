@@ -73,6 +73,9 @@ class FakeCompiler:
             raise LogNotFound(log_id)
         return {**META, "log": "the full log"}
 
+    def is_compiling(self, project_id: str) -> bool:
+        return False
+
 
 @pytest.fixture
 def fake(settings: Settings) -> FakeCompiler:
@@ -110,9 +113,41 @@ def test_compile_returns_the_result(api: TestClient, fake: FakeCompiler) -> None
         "engine": "pdflatex",
         "root_file": "main.tex",
         "log_id": "a" * 32,
-        "pdf_url": f"/api/projects/{pid}/pdf?v={pdf.stat().st_mtime_ns}",
+        "pdf_url": f"/api/projects/{pid}/pdf?v={pdf.stat().st_mtime_ns}-{'a' * 32}",
     }
     assert fake.calls == [{"project_id": pid, "root_file": None, "engine": None}]
+
+
+def test_pdf_url_is_unique_per_compile(store: ProjectStore) -> None:
+    # CORRECTNESS-6: two PDFs that happen to share an mtime (a coarse-mtime
+    # file system) still get different URLs, so the viewer reloads.
+    from prismtex.api.compile import _pdf_url
+    from prismtex.compile import CompileResult
+
+    info = store.create(kind="blank")
+    out = store.layout.out(info.id)
+    out.mkdir(parents=True, exist_ok=True)
+    pdf = out / "main.pdf"
+    pdf.write_bytes(b"%PDF")
+
+    def result(log_id: str) -> CompileResult:
+        return CompileResult(
+            status="ok",
+            diagnostics=(),
+            pdf_path=pdf,
+            log_text="",
+            duration_ms=1,
+            engine="pdflatex",
+            root_file="main.tex",
+            exit_code=0,
+            log_id=log_id,
+        )
+
+    first = _pdf_url(store, info.id, result("a" * 32))
+    second = _pdf_url(store, info.id, result("b" * 32))
+    assert first is not None and second is not None
+    assert first != second
+    assert first.endswith(f"-{'a' * 32}") and second.endswith(f"-{'b' * 32}")
 
 
 def test_compile_overrides_are_passed_through_and_not_saved(

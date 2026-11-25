@@ -262,15 +262,92 @@ def test_runs_the_hardened_argv_in_the_project_folder(
     compiler = fake_tex(
         record=str(record), pdf=True, log=CLEAN_LOG, base={"OPENAI_API_KEY": "sk-secret"}
     )
-    compiler.compile(info.id, engine="lualatex")
+    compiler.compile(info.id)
     [call, _end] = _records(record)
     out = store.layout.out(info.id)
-    assert call["argv"] == build_latexmk_argv("main.tex", "lualatex", out)[1:]
+    # The fake PATH holds no real TeX tools, so every tool keeps its bare name.
+    assert call["argv"] == build_latexmk_argv("main.tex", "pdflatex", out)[1:]
     assert Path(call["cwd"]) == store.project_dir(info.id).resolve()
     env = call["env"]
     assert (env["openin_any"], env["openout_any"], env["shell_escape"]) == ("p", "p", "f")
     assert env["TEXMFOUTPUT"] == str(out)
+    assert env["MISSFONT_LOG"] == "0"
     assert "OPENAI_API_KEY" not in env
+
+
+def test_lualatex_is_refused_at_compile_time(store: ProjectStore, tmp_path: Path) -> None:
+    # SECURITY-2: lualatex cannot be run safely on untrusted input yet, so a
+    # compile with it returns unavailable (no latexmk is started).
+    info = store.create(kind="blank")
+    compiler = Compiler(store, base_env=_empty_path(tmp_path))
+    result = compiler.compile(info.id, engine="lualatex")
+    assert result.status == "unavailable"
+    assert [(d.kind, d.severity) for d in result.diagnostics] == [("engine_disabled", "error")]
+    assert "disabled in this release" in result.diagnostics[0].message
+    assert result.engine == "lualatex"
+    assert result.pdf_path is None
+
+
+@pytest.mark.parametrize("name", ["pdflatex.exe", "pdflatex.cmd", "bibtex.bat", "pdflatex"])
+def test_executable_project_file_is_refused(store: ProjectStore, tmp_path: Path, name: str) -> None:
+    # CORRECTNESS-1 (defence in depth, no TeX needed): a file at the project
+    # root that Windows could run as a tool is refused before latexmk starts.
+    from prismtex.errors import UnsafeProjectFile
+
+    info = store.create(kind="blank")
+    (store.project_dir(info.id) / name).write_bytes(b"MZ\x90\x00")
+    compiler = fake_latexmk_marker(store, tmp_path)
+    with pytest.raises(UnsafeProjectFile) as caught:
+        compiler.compile(info.id)
+    assert caught.value.extra["path"] == name
+    assert not (tmp_path / "latexmk-ran").exists()
+
+
+def fake_latexmk_marker(store: ProjectStore, tmp_path: Path) -> Compiler:
+    """A Compiler whose latexmk, if ever started, leaves a marker file."""
+    bin_dir = tmp_path / "marker-bin"
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "latexmk"
+    script.write_text(
+        f"#!{sys.executable}\nfrom pathlib import Path\n"
+        f"Path({str(tmp_path / 'latexmk-ran')!r}).write_text('ran')\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return Compiler(store, base_env={"PATH": str(bin_dir)})
+
+
+def test_is_compiling_reflects_the_lock(store: ProjectStore, tmp_path: Path) -> None:
+    info = store.create(kind="blank")
+    compiler = Compiler(store, base_env=_empty_path(tmp_path))
+    assert compiler.is_compiling(info.id) is False
+    lock = compiler._lock(info.id)  # noqa: SLF001 - the lock is the thing under test
+    with lock:
+        assert compiler.is_compiling(info.id) is True
+    assert compiler.is_compiling(info.id) is False
+
+
+def test_bounded_reader_caps_a_huge_file(tmp_path: Path) -> None:
+    # CORRECTNESS-3: a 200 MB file is read in bounded memory and time.
+    from prismtex.compile.compiler import (
+        _LOG_HEAD_BYTES,
+        _LOG_TAIL_BYTES,
+        _read_bounded,
+    )
+
+    big = tmp_path / "huge.log"
+    with big.open("wb") as handle:
+        handle.truncate(200 * 2**20)
+        handle.seek(0)
+        handle.write(b"HEAD-MARKER\n")
+        handle.seek(200 * 2**20 - 12)
+        handle.write(b"TAIL-MARKER\n")
+    text = _read_bounded(big)
+    assert text is not None
+    assert len(text.encode("utf-8")) <= _LOG_HEAD_BYTES + _LOG_TAIL_BYTES + 128
+    assert text.startswith("HEAD-MARKER\n")
+    assert text.rstrip().endswith("TAIL-MARKER")
+    assert "bytes omitted" in text
 
 
 @posix_only

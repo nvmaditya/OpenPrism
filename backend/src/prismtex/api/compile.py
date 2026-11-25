@@ -64,9 +64,12 @@ def _pdf_url(store: ProjectStore, project_id: str, result: CompileResult) -> str
     if result.pdf_path is None:
         return None
     try:
-        version = result.pdf_path.stat().st_mtime_ns
+        mtime = result.pdf_path.stat().st_mtime_ns
     except OSError:
         return None
+    # The PDF's mtime alone can repeat on a coarse-mtime file system; the
+    # log_id is unique per compile, so the viewer always reloads a new PDF.
+    version = f"{mtime}-{result.log_id}" if result.log_id else str(mtime)
     query: dict[str, str | int] = {"v": version}
     # GET /pdf serves the project's root file by default; a run with another
     # root file has to name it.
