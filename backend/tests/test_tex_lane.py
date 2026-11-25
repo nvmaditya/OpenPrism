@@ -626,6 +626,29 @@ def test_biber_does_not_execute_a_crafted_datatype(
     assert not marker.exists(), "the crafted datatype executed a command"
 
 
+def test_biber_fails_closed_when_the_guard_cannot_be_named(
+    store: ProjectStore, compiler: Compiler, outside: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With a Python path the guard cannot be named from (a space, as under
+    # C:\Program Files), biber is disabled rather than run unguarded: the
+    # crafted datatype must still not execute, and no bibliography is built.
+    assert shutil.which("biber"), "biber is not on PATH; this test needs it"
+    monkeypatch.setattr(sys, "executable", "/nonexistent dir/python3")
+    marker = outside / "biber-fallback-marker"
+    datatype = f"bibtex`touch {marker.as_posix()}`"
+    doc = (
+        "\\documentclass{article}\n"
+        "\\usepackage[backend=biber]{biblatex}\n"
+        f"\\addbibresource[datatype={{{datatype}}}]{{refs.bib}}\n"
+        "\\begin{document}\n\\nocite{*}\n\\printbibliography\n\\end{document}\n"
+    )
+    pid = _project(store, {"main.tex": doc, "refs.bib": KNUTH})
+    result = compiler.compile(pid)
+    assert result.status != "ok"
+    assert not marker.exists(), "biber ran unguarded and executed the crafted datatype"
+    assert not (store.layout.out(pid) / "main.bbl").is_file()
+
+
 # -- HTTP --------------------------------------------------------------------------
 
 

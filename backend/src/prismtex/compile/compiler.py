@@ -66,9 +66,9 @@ TEX_MISSING_MESSAGE = (
     "and make sure latexmk is on PATH."
 )
 LUALATEX_DISABLED_MESSAGE = (
-    "LaTeX engine lualatex is disabled in this release because it cannot be "
-    "run safely on untrusted input yet; use pdflatex or xelatex. It returns "
-    "with the compile sandbox."
+    "LaTeX engine lualatex is disabled in this release because it cannot yet be run "
+    "safely on untrusted input. Use pdflatex or xelatex; lualatex will come back once "
+    "compiles run in a sandbox."
 )
 
 # A project file latexmk's working directory could let Windows run as a tool.

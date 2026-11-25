@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from prismtex.compile import build_latexmk_argv, build_tex_env, is_shell_safe_name
-from prismtex.compile.argv import resolve_tools
+from prismtex.compile.argv import BIBER_UNAVAILABLE, resolve_tools
 
 OUT = Path("/data/build/p/out").resolve()
 
@@ -72,6 +72,26 @@ def test_tools_are_passed_by_absolute_path() -> None:
     assert "$kpsewhich=q{/opt/texbin/kpsewhich %S}" in argv
     # biber always routes through the guard, run by this interpreter.
     assert BIBER_E in argv
+
+
+@pytest.mark.parametrize(
+    "python",
+    ["C:/Program Files/Python312/python.exe", "/opt/py`id`/bin/python", ""],
+)
+def test_biber_is_disabled_when_the_guard_cannot_be_named(
+    monkeypatch: pytest.MonkeyPatch, python: str
+) -> None:
+    # A Python path latexmk's shell would split or expand cannot name the
+    # guard. Leaving $biber unset would let latexmk run the real biber
+    # unguarded, so biber is disabled with latexmk's NONE keyword instead.
+    monkeypatch.setattr(sys, "executable", python)
+    argv = build_latexmk_argv("main.tex", "pdflatex", OUT)
+    biber = [
+        argv[i + 1] for i, a in enumerate(argv) if a == "-e" and argv[i + 1].startswith("$biber=")
+    ]
+    assert biber == [f"$biber=q{{{BIBER_UNAVAILABLE}}}"]
+    assert BIBER_UNAVAILABLE.startswith("NONE ")
+    assert "biberguard" not in " ".join(argv)
 
 
 def test_resolve_tools_finds_real_tex_binaries() -> None:

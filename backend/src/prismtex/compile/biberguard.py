@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
@@ -103,7 +104,7 @@ def _control_file(args: list[str]) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Vet the control file, then exec the real ``biber --noconf`` (never returns on success)."""
+    """Vet the control file, then run the real ``biber --noconf`` (see `_run_biber`)."""
     args = list(sys.argv[1:] if argv is None else argv)
     control = _control_file(args)
     if control is None:
@@ -122,7 +123,22 @@ def main(argv: list[str] | None = None) -> int:
     if biber is None:
         sys.stderr.write("prismtex biber guard: biber was not found on PATH.\n")
         return 2
-    os.execv(biber, [biber, "--noconf", *args])
+    return _run_biber(biber, ["--noconf", *args])
+
+
+def _run_biber(biber: str, args: list[str]) -> int:
+    """Run the real biber with `args` and return its exit status.
+
+    On POSIX the guard replaces itself (``execv``), so latexmk waits on biber
+    directly. Windows has no such replacement: its ``exec`` starts a new
+    process and ends this one at once with status 0, so latexmk would carry on
+    before the ``.bbl`` exists and never see biber fail. There the guard runs
+    biber as a child and passes its exit status back.
+    """
+    if os.name == "nt":
+        return subprocess.run([biber, *args], check=False).returncode
+    os.execv(biber, [biber, *args])
+    return 2  # pragma: no cover - execv does not return
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised as a subprocess
