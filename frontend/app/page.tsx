@@ -1,7 +1,5 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BookOpen,
@@ -22,9 +20,20 @@ import {
   errorMessage,
   importProject,
   listProjects,
+  MAX_PROJECT_NAME,
   type ProjectInfo,
   type TemplateKind,
 } from "@/lib/api";
+
+// Open a project by loading its page as a fresh document (not a client-side
+// router push or <Link>). The IDE's unsaved-buffer guard is a `beforeunload`
+// handler, which only fires when the browser leaves the document; isolating the
+// IDE in its own document means Back, Forward, a swipe-back gesture and reload
+// all cross a document boundary and hit that guard, instead of a client-side
+// popstate that drops the buffer with no prompt. (FRONTEND-2)
+function openProject(id: string): void {
+  window.location.assign(`/project/${encodeURIComponent(id)}`);
+}
 
 const TEMPLATES: { kind: TemplateKind; label: string; icon: LucideIcon }[] = [
   { kind: "blank", label: "Blank project", icon: FilePlusCorner },
@@ -47,7 +56,6 @@ function relativeTime(iso: string): string {
 }
 
 export default function DashboardPage() {
-  const router = useRouter();
   const [projects, setProjects] = useState<ProjectInfo[] | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +89,7 @@ export default function DashboardPage() {
     setError(null);
     try {
       const project = await createProject(kind);
-      router.push(`/project/${project.id}`);
+      openProject(project.id);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -92,8 +100,16 @@ export default function DashboardPage() {
     setBusy(true);
     setError(null);
     try {
-      const project = await importProject(file, file.name.replace(/\.zip$/i, "") || undefined);
-      router.push(`/project/${project.id}`);
+      // Derive the name from the ZIP's file name, but trim it and cut it to the
+      // backend's limit (counted in code points, like Python's len) so a long
+      // archive name cannot make the import fail where a nameless import would
+      // have succeeded. (FRONTEND-6)
+      const base = Array.from(file.name.replace(/\.zip$/i, "").trim())
+        .slice(0, MAX_PROJECT_NAME)
+        .join("")
+        .trim();
+      const project = await importProject(file, base || undefined);
+      openProject(project.id);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -225,14 +241,16 @@ export default function DashboardPage() {
                 key={project.id}
                 className="grid grid-cols-[1fr_120px_100px] items-center gap-2 border-b border-zinc-800/80 px-4 py-3 hover:bg-zinc-900/50"
               >
-                <Link href={`/project/${project.id}`} className="group flex min-w-0 items-center gap-3">
+                {/* Plain <a>: a document load, so the IDE owns its own history
+                    entry and its unsaved-buffer guard fires on Back. (FRONTEND-2) */}
+                <a href={`/project/${project.id}`} className="group flex min-w-0 items-center gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-zinc-400">
                     <FileText className="h-4 w-4" aria-hidden />
                   </span>
                   <span className="truncate font-medium text-zinc-100 group-hover:text-white">
                     {project.name}
                   </span>
-                </Link>
+                </a>
                 <span className="text-sm text-zinc-500" title={new Date(project.created_at).toLocaleString()}>
                   {relativeTime(project.created_at)}
                 </span>

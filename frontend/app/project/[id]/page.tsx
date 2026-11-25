@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, FileCodeCorner, FileText, Info, Play, Save, ScrollText, X } from "lucide-react";
@@ -120,8 +119,11 @@ function ProjectIde({ projectId }: { projectId: string }) {
   const openAt = useCallback(
     async (path: string, line: number | null = null) => {
       try {
-        if ((await open(path)) && line) {
-          setReveal((prev) => ({ line, seq: (prev?.seq ?? 0) + 1 }));
+        if (await open(path)) {
+          // Clear any pending reveal when a file is opened without a line, so an
+          // old line jump is not replayed onto an unrelated file when the editor
+          // remounts (after a binary file, or a closed buffer). (FRONTEND-4)
+          setReveal(line ? (prev) => ({ line, seq: (prev?.seq ?? 0) + 1 }) : null);
         }
       } catch (err) {
         report(err);
@@ -205,9 +207,12 @@ function ProjectIde({ projectId }: { projectId: string }) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 text-sm text-zinc-400">
         <p>This project does not exist.</p>
-        <Link href="/" className="text-sky-400 hover:underline">
+        {/* Plain <a> (document load) keeps the IDE its own document so the
+            unsaved-buffer guard fires on Back; see the header link. (FRONTEND-2) */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a href="/" className="text-sky-400 hover:underline">
           Back to your projects
-        </Link>
+        </a>
       </div>
     );
   }
@@ -218,22 +223,20 @@ function ProjectIde({ projectId }: { projectId: string }) {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-zinc-950 text-zinc-100">
       <header className="flex shrink-0 items-center gap-3 border-b border-zinc-800 px-3 py-2">
-        <Link
+        {/* Plain <a>: leaving the IDE is a document load, so the hook's
+            `beforeunload` guard catches Back, Forward, swipe-back and reload.
+            That guard already prompts when the buffer is dirty, so this link
+            needs no onClick confirm of its own (which would prompt twice on the
+            leave path). (FRONTEND-2) */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a
           href="/"
           className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
           title="All projects"
-          onClick={(event) => {
-            if (
-              buffer.dirty &&
-              !window.confirm(`Leave without saving your changes to “${file?.path}”?`)
-            ) {
-              event.preventDefault();
-            }
-          }}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden />
           <span className="sr-only">All projects</span>
-        </Link>
+        </a>
         <span className="max-w-[240px] truncate font-medium">{project?.name ?? ""}</span>
         <div className="ml-auto flex items-center gap-2">
           <CompileStatusChip
