@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "OpenPrism",
-  description: "Local Prism reverse-engineer — LaTeX IDE + agent",
+  title: "PrismTeX",
+  description: "A self-hosted LaTeX workspace.",
 };
 
 export default function RootLayout({
@@ -13,9 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
-        {children}
-      </body>
+      <body className="min-h-screen bg-zinc-950 text-zinc-100 antialiased">{children}</body>
     </html>
   );
 }
