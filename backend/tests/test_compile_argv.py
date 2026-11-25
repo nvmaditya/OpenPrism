@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
 from prismtex.compile import build_latexmk_argv, build_tex_env, is_shell_safe_name
+from prismtex.compile.argv import resolve_tools
 
 OUT = Path("/data/build/p/out").resolve()
 
+# The guard latexmk is told to run instead of biber (always wired, even on
+# POSIX, because it closes the Biber outside-read and the eval-based RCE).
+BIBER_E = f"$biber=q{{{sys.executable} -P -m prismtex.compile.biberguard %O %S}}"
 
-def _common(out: Path) -> list[str]:
+
+def _tail(out: Path) -> list[str]:
     return [
         "-interaction=nonstopmode",
         "-file-line-error",
@@ -23,21 +29,56 @@ def _common(out: Path) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("engine", "flags"),
+    ("engine", "pdf_flag", "engine_opt"),
     [
-        ("pdflatex", ["-pdf"]),
-        ("xelatex", ["-pdfxe"]),
-        ("lualatex", ["-pdflua", "-lualatex=lualatex --safer --nosocket %O %S"]),
+        ("pdflatex", "-pdf", "-pdflatex=pdflatex %O %S"),
+        ("xelatex", "-pdfxe", "-xelatex=xelatex %O %S"),
+        ("lualatex", "-pdflua", "-lualatex=lualatex --safer --nosocket %O %S"),
     ],
 )
-def test_argv_per_engine(engine: str, flags: list[str]) -> None:
+def test_argv_per_engine(engine: str, pdf_flag: str, engine_opt: str) -> None:
+    # tools=None: every program keeps its bare name (the POSIX/default shape).
     argv = build_latexmk_argv("main.tex", engine, OUT)  # pyright: ignore[reportArgumentType]
-    assert argv == ["latexmk", "-norc", *flags, *_common(OUT), "main.tex"]
+    assert argv == [
+        "latexmk",
+        "-norc",
+        pdf_flag,
+        engine_opt,
+        "-e",
+        BIBER_E,
+        *_tail(OUT),
+        "main.tex",
+    ]
 
 
 def test_lualatex_command_is_one_argv_element() -> None:
     argv = build_latexmk_argv("main.tex", "lualatex", OUT)
     assert "-lualatex=lualatex --safer --nosocket %O %S" in argv
+
+
+def test_tools_are_passed_by_absolute_path() -> None:
+    # CORRECTNESS-1: the engine and every helper tool is named by an absolute
+    # path, so Windows cannot run a same-named file from the project folder.
+    tools = {
+        "pdflatex": "/opt/texbin/pdflatex",
+        "bibtex": "/opt/texbin/bibtex",
+        "makeindex": "/opt/texbin/makeindex",
+        "kpsewhich": "/opt/texbin/kpsewhich",
+    }
+    argv = build_latexmk_argv("main.tex", "pdflatex", OUT, tools=tools)
+    assert "-pdflatex=/opt/texbin/pdflatex %O %S" in argv
+    assert "$bibtex=q{/opt/texbin/bibtex %O %S}" in argv
+    assert "$makeindex=q{/opt/texbin/makeindex %O -o %D %S}" in argv
+    assert "$kpsewhich=q{/opt/texbin/kpsewhich %S}" in argv
+    # biber always routes through the guard, run by this interpreter.
+    assert BIBER_E in argv
+
+
+def test_resolve_tools_finds_real_tex_binaries() -> None:
+    tools = resolve_tools(os.environ.get("PATH"))
+    # pdflatex, bibtex, biber and kpsewhich are present in the TeX lane's env.
+    pdflatex = tools.get("pdflatex")
+    assert pdflatex is not None and os.path.isabs(pdflatex)
 
 
 def test_argv_never_enables_shell_escape_or_rc_files() -> None:
@@ -48,7 +89,12 @@ def test_argv_never_enables_shell_escape_or_rc_files() -> None:
         joined = " ".join(argv)
         assert "-shell-escape" not in joined.replace("-no-shell-escape", "")
         assert "-halt-on-error" not in joined
-        assert not any(arg in ("-e", "-r") for arg in argv)
+        assert "-r" not in argv
+        # The only -e assignments pin known tools (biber guard, bibtex, ...).
+        values = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
+        assert all(
+            v.startswith(("$biber=", "$bibtex=", "$makeindex=", "$kpsewhich=")) for v in values
+        )
 
 
 def test_relative_out_dir_becomes_absolute() -> None:
@@ -114,6 +160,8 @@ BASE = {
 
 def test_env_keeps_only_the_allowlist() -> None:
     env = build_tex_env(BASE, OUT)
+    prismtex_parent = env["PYTHONPATH"]  # the dir holding the prismtex package
+    assert (Path(prismtex_parent) / "prismtex" / "__init__.py").is_file()
     assert env == {
         "PATH": "/usr/bin:/bin",
         "HOME": "/home/ann",
@@ -129,6 +177,9 @@ def test_env_keeps_only_the_allowlist() -> None:
         "max_print_line": "10000",
         "error_line": "254",
         "half_error_line": "238",
+        "MISSFONT_LOG": "0",
+        "NoDefaultCurrentDirectoryInExePath": "1",
+        "PYTHONPATH": prismtex_parent,
     }
 
 

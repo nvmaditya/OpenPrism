@@ -423,9 +423,13 @@ def parse_blg(text: str, *, src_dir: Path | None = None) -> list[Diagnostic]:
 
 # -- latexmk's own output ------------------------------------------------------
 
+# TeX Live 2024+ appends "; extended check" or "; no extended check" to the
+# refusal (and TL2024.0 printed a double space before it, fixed 2024-08-19).
+# The program is now named by its absolute path (argv.py pins the tools), so
+# it is matched loosely and shown by base name only (no server path leaks).
 _DENIED = re.compile(
-    r"^(?:(?P<program>[\w.-]+): )?Not (?P<action>reading from|writing to) (?P<path>.+?) "
-    r"\((?:openin_any|openout_any) = \w\)\.?\s*$"
+    r"^(?:(?P<program>.+?): )?Not (?P<action>reading from|writing to) (?P<path>.+?) "
+    r"\((?:openin_any|openout_any) = \w(?:;\s*(?:no\s+)?extended check)?\)\.?\s*$"
 )
 
 
@@ -434,7 +438,8 @@ def parse_tool_output(text: str) -> list[Diagnostic]:
     found: list[Diagnostic] = []
     for line in text.splitlines():
         if denied := _DENIED.match(line.strip()):
-            program = denied["program"] or "TeX"
+            # The tool is pinned by absolute path, so show its base name only.
+            program = PurePosixPath((denied["program"] or "TeX").replace("\\", "/")).name
             if denied["action"] == "reading from":
                 message = (
                     f"{program} was not allowed to read '{denied['path']}': "

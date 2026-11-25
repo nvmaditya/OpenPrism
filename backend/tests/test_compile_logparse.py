@@ -258,6 +258,35 @@ def test_parse_tool_output_fixture(case: str, expected: list[Expected]) -> None:
     _check(parse_tool_output(text), expected)
 
 
+def test_tl2024_refusal_wording_is_recognised() -> None:
+    # DOCSCI-1: TeX Live 2024+ appends "; (no )extended check" to kpathsea's
+    # refusal; the CI tex image is TL2026, so access_denied must still parse.
+    text = (FIXTURES / "attack_input_abs_tl2024.latexmk.txt").read_text(encoding="utf-8")
+    _check(
+        parse_tool_output(text),
+        [
+            ("warning", "access_denied", None, None, "not allowed to read '/etc/hostname'"),
+            ("warning", "access_denied", None, None, "not allowed to write '/tmp/x/written.txt'"),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "",  # TeX Live 2023 and earlier
+        "; no extended check",  # TeX Live 2024+ with openin_any=p
+        "; extended check",  # TeX Live 2024+ with an extended check
+        ";  extended check",  # TeX Live 2024.0's double space (fixed 2024-08-19)
+    ],
+)
+def test_access_denied_across_tex_live_wordings(suffix: str) -> None:
+    line = f"pdflatex: Not reading from /etc/secret (openin_any = p{suffix})."
+    found = parse_tool_output(line)
+    assert [(d.kind, d.severity) for d in found] == [("access_denied", "warning")]
+    assert "/etc/secret" in found[0].message
+
+
 def test_fixtures_cover_every_kind_of_the_spec() -> None:
     covered = {e[1] for cases in (LOG_CASES, BLG_CASES) for exp in cases.values() for e in exp}
     assert SPEC_KINDS <= covered

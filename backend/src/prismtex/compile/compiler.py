@@ -15,7 +15,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Literal, Protocol, get_args
 
-from prismtex.compile.argv import build_latexmk_argv, build_tex_env, is_shell_safe_name
+from prismtex.compile.argv import (
+    build_latexmk_argv,
+    build_tex_env,
+    is_shell_safe_name,
+    resolve_tools,
+)
+from prismtex.compile.flsaudit import AUDITED_ENGINES, audit_inputs
 from prismtex.compile.logparse import (
     Diagnostic,
     combine_diagnostics,
@@ -32,8 +38,10 @@ from prismtex.errors import (
     ProjectNotFound,
     RootFileInvalid,
     RootFileMissing,
+    UnsafeProjectFile,
 )
 from prismtex.workspace import Engine, ProjectStore, check_relative_path, check_root_file
+from prismtex.workspace.paths import INTERNAL_DIRS
 
 __all__ = [
     "MAX_LOG_TEXT_BYTES",
@@ -48,9 +56,32 @@ __all__ = [
 CompileStatus = Literal["ok", "failed", "timeout", "unavailable"]
 
 MAX_LOG_TEXT_BYTES = 2 * 2**20
+# Of a `.log` or `.blg`, keep only this much head and tail: enough to hold the
+# diagnostics (errors cluster at the start and end), and bounded no matter how
+# large a runaway `\message` loop grows the file (CORRECTNESS-3).
+_LOG_HEAD_BYTES = 512 * 1024
+_LOG_TAIL_BYTES = 1536 * 1024
 TEX_MISSING_MESSAGE = (
     "latexmk was not found. Install TeX Live or MiKTeX (with Perl) "
     "and make sure latexmk is on PATH."
+)
+LUALATEX_DISABLED_MESSAGE = (
+    "LaTeX engine lualatex is disabled in this release because it cannot be "
+    "run safely on untrusted input yet; use pdflatex or xelatex. It returns "
+    "with the compile sandbox."
+)
+
+# A project file latexmk's working directory could let Windows run as a tool.
+# Any executable extension at the project root is refused, as is an
+# extensionless file named after a program latexmk or kpathsea starts.
+_EXECUTABLE_EXTS = frozenset(
+    {".exe", ".com", ".bat", ".cmd", ".pif", ".scr", ".msc"}
+    | {".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".ps1"}
+)
+_TOOL_STEMS = frozenset(
+    {"pdflatex", "xelatex", "lualatex", "latex", "tex", "pdftex", "luatex", "luahbtex"}
+    | {"xetex", "bibtex", "biber", "makeindex", "kpsewhich", "latexmk", "perl"}
+    | {"mktextfm", "mktexpk", "mktexmf", "mktexfmt", "gswin32c", "gswin64c"}
 )
 
 # latexmk prints this when the outputs match the sources, whether or not it
@@ -87,6 +118,8 @@ class CompileService(Protocol):
     def logs(self, project_id: str) -> list[LogSummary]: ...
 
     def get_log(self, project_id: str, log_id: str) -> LogSummary: ...
+
+    def is_compiling(self, project_id: str) -> bool: ...
 
 
 class Compiler:
@@ -158,6 +191,14 @@ class Compiler:
         self.store.get(project_id)
         return self._logs.get(project_id, log_id)
 
+    def is_compiling(self, project_id: str) -> bool:
+        """Whether a compile currently holds this project's lock (does not block)."""
+        lock = self._lock(project_id)
+        if lock.acquire(blocking=False):
+            lock.release()
+            return False
+        return True
+
     # -- any source folder ----------------------------------------------------
 
     def compile_dir(
@@ -180,26 +221,37 @@ class Compiler:
         src = Path(src_dir).resolve()
         root = _check_root(src, root_file)
         engine = _check_engine(engine)
+        if engine == "lualatex":
+            # lualatex's Lua layer reads arbitrary files and the server's
+            # environment even under --safer, and the .fls audit cannot see
+            # those reads, so it is refused outright (SECURITY-2).
+            return self._finish_unavailable(
+                LUALATEX_DISABLED_MESSAGE, root, engine, log_path, kind="engine_disabled"
+            )
+        _refuse_executable_files(src)
         out = Path(out_dir).resolve()
         if out == src or out.is_relative_to(src):
             raise ValueError("out_dir must be outside the source folder")
         out.mkdir(parents=True, exist_ok=True)
+        # latexmk does not create the aux subfolders a \include needs when
+        # -file-line-error is on, so mirror the source tree into out (SPEC-1).
+        _mirror_tree(src, out)
         limit = self.timeout_s if timeout_s is None else timeout_s
 
         stem = PurePosixPath(root).stem
         outputs = _Outputs.capture(out, stem)
-        argv = build_latexmk_argv(root, engine, out)
         env = build_tex_env(os.environ if self._base_env is None else self._base_env, out)
+        argv = build_latexmk_argv(root, engine, out, tools=resolve_tools(env.get("PATH")))
         try:
             run = run_hardened(argv, cwd=src, env=env, timeout_s=limit)
-            reading = _read_outputs(run, outputs, src)
+            reading = _read_outputs(run, outputs, src, parse=not run.timed_out)
             remaining = limit - run.duration_ms / 1000
             if _stale_rule_failure(run, outputs, reading) and remaining > 0:
                 # latexmk 4.83 reports a rule's old failure once more after the
                 # rule stops being used (the bibliography was removed, say).
                 # The next run has nothing left to do and settles it.
                 run = _joined(run, run_hardened(argv, cwd=src, env=env, timeout_s=remaining))
-                reading = _read_outputs(run, outputs, src)
+                reading = _read_outputs(run, outputs, src, parse=not run.timed_out)
         except ExecutableNotFound:
             return self._finish_unavailable(TEX_MISSING_MESSAGE, root, engine, log_path)
         except OSError as exc:
@@ -223,6 +275,15 @@ class Compiler:
             if not ok and not has_error:
                 found = [*found, _failure_reason(run.exit_code, pdf_path, reading.log_text)]
             diagnostics = tuple(found)
+            if pdf_path is not None and engine in AUDITED_ENGINES:
+                # The PDF may carry a file read from outside the project
+                # (pdfTeX \pdfobj bypasses openin_any); discard it (SECURITY-1).
+                offending = audit_inputs(out, src, path_env=env.get("PATH"))
+                if offending:
+                    pdf_path.unlink(missing_ok=True)
+                    pdf_path = None
+                    status = "failed"
+                    diagnostics = (_access_denied(offending), *diagnostics)
 
         text = _cap_text(_combined_log(run.output, run.truncated, stem, reading.log_text))
         if log_path is not None:
@@ -246,13 +307,18 @@ class Compiler:
 
     @staticmethod
     def _finish_unavailable(
-        message: str, root: str, engine: Engine, log_path: Path | None
+        message: str,
+        root: str,
+        engine: Engine,
+        log_path: Path | None,
+        *,
+        kind: str = "tex_missing",
     ) -> CompileResult:
         if log_path is not None:
             _write_text(log_path, message + "\n")
         return CompileResult(
             status="unavailable",
-            diagnostics=(Diagnostic(None, None, "error", "tex_missing", message),),
+            diagnostics=(Diagnostic(None, None, "error", kind, message),),
             pdf_path=None,
             log_text=message + "\n",
             duration_ms=0,
@@ -286,20 +352,28 @@ class _Reading:
     pdf_current: bool
 
 
-def _read_outputs(run: RunOutcome, outputs: _Outputs, src: Path) -> _Reading:
-    """What a finished run left behind: the current log, its diagnostics, the PDF."""
+def _read_outputs(run: RunOutcome, outputs: _Outputs, src: Path, *, parse: bool) -> _Reading:
+    """What a finished run left behind: the current log, its diagnostics, the PDF.
+
+    The log and .blg are read head-and-tail only, so a runaway log cannot grow
+    the read without bound. When `parse` is False (a timeout), the log text is
+    still read for the stored log, but it is not parsed: the result is thrown
+    away, and a multi-gigabyte parse is not worth its time or memory
+    (CORRECTNESS-3).
+    """
     up_to_date = _UP_TO_DATE.search(run.output) is not None
     current_log = outputs.changed(outputs.log) or up_to_date
-    log_text = _read_text(outputs.log) if current_log else None
+    log_text = _read_bounded(outputs.log) if current_log else None
     groups: list[list[Diagnostic]] = []
-    if log_text is not None:
-        groups.append(parse_log(log_text, src_dir=src))
-    # A .blg BibTeX did not rewrite still describes the bibliography if the
-    # document still reads the .bbl; otherwise it is left over.
-    bbl = outputs.pdf.with_suffix(".bbl").name
-    if outputs.blg.is_file() and (outputs.changed(outputs.blg) or _mentions(log_text, bbl)):
-        groups.append(parse_blg(_read_text(outputs.blg) or "", src_dir=src))
-    groups.append(parse_tool_output(run.output))
+    if parse:
+        if log_text is not None:
+            groups.append(parse_log(log_text, src_dir=src))
+        # A .blg BibTeX did not rewrite still describes the bibliography if the
+        # document still reads the .bbl; otherwise it is left over.
+        bbl = outputs.pdf.with_suffix(".bbl").name
+        if outputs.blg.is_file() and (outputs.changed(outputs.blg) or _mentions(log_text, bbl)):
+            groups.append(parse_blg(_read_bounded(outputs.blg) or "", src_dir=src))
+        groups.append(parse_tool_output(run.output))
     # After a failed run whose sources have not changed, latexmk exits non-zero
     # and still says "up-to-date"; the PDF on disk then predates that failure.
     pdf_current = outputs.changed(outputs.pdf) or (
@@ -361,6 +435,51 @@ def _check_engine(engine: str) -> Engine:
     raise InvalidRequest("The engine must be pdflatex, xelatex or lualatex.", field="engine")
 
 
+def _refuse_executable_files(src: Path) -> None:
+    """Refuse a project whose root folder holds a file Windows could run as a tool."""
+    try:
+        entries = list(src.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if not entry.is_file():
+                continue
+        except OSError:
+            continue
+        name = entry.name
+        suffix = PurePosixPath(name).suffix.lower()
+        if suffix in _EXECUTABLE_EXTS or (not suffix and name.lower() in _TOOL_STEMS):
+            raise UnsafeProjectFile(
+                name,
+                f"The project folder contains '{name}', which could be run as a program "
+                "during compilation on Windows. Remove it, then compile.",
+            )
+
+
+def _mirror_tree(src: Path, out: Path) -> None:
+    """Create each of `src`'s subfolders under `out` (empty), skipping internal and links."""
+    for parent, dirnames, _ in os.walk(src, followlinks=False):
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name.lower() not in INTERNAL_DIRS and not Path(parent, name).is_symlink()
+        ]
+        rel = Path(parent).relative_to(src)
+        for name in dirnames:
+            (out / rel / name).mkdir(parents=True, exist_ok=True)
+
+
+def _access_denied(offending: list[str]) -> Diagnostic:
+    """The error for a PDF discarded because it was built from a read outside the project."""
+    shown = ", ".join(f"'{path}'" for path in offending[:5])
+    message = (
+        f"A file outside the project was read while building the PDF ({shown}); the PDF "
+        "was discarded. A project can only read files inside its own folder."
+    )
+    return Diagnostic(None, None, "error", "access_denied", message)
+
+
 _Stamp = tuple[int, int, int]
 
 
@@ -372,11 +491,28 @@ def _stamp(path: Path) -> _Stamp | None:
     return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
 
-def _read_text(path: Path) -> str | None:
+def _read_bounded(
+    path: Path, head: int = _LOG_HEAD_BYTES, tail: int = _LOG_TAIL_BYTES
+) -> str | None:
+    """At most `head` + `tail` bytes of `path`: its start and its end, with a marker.
+
+    A log a runaway `\\message` loop grew to gigabytes is read in bounded
+    memory, because only the two ends are read (CORRECTNESS-3).
+    """
     try:
-        return path.read_bytes().decode("utf-8", errors="replace")
+        with path.open("rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            if size <= head + tail:
+                data = handle.read()
+            else:
+                head_data = handle.read(head)
+                handle.seek(size - tail)
+                omitted = size - head - tail
+                marker = f"\n[... {omitted} bytes omitted ...]\n".encode()
+                data = head_data + marker + handle.read(tail)
     except OSError:
         return None
+    return data.decode("utf-8", errors="replace")
 
 
 def _write_text(path: Path, text: str) -> None:

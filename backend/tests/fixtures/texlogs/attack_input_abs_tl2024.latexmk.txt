@@ -1,0 +1,26 @@
+Rc files read:
+  NONE
+Latexmk: This is Latexmk, John Collins, Version 4.83.
+Latexmk: applying rule 'pdflatex'...
+------------
+Run number 1 of rule 'pdflatex'
+------------
+Running 'pdflatex  -interaction=nonstopmode -file-line-error -synctex=1 -no-shell-escape -recorder -output-directory="/data/build/attack_input_abs/out"  "main.tex"'
+------------
+This is pdfTeX, Version 3.141592653-2.6-1.40.26 (TeX Live 2026) (preloaded format=pdflatex)
+entering extended mode
+(./main.tex
+LaTeX2e <2024-11-01>
+(/usr/local/texlive/2026/texmf-dist/tex/latex/base/article.cls
+Document Class: article) (/data/build/attack_input_abs/out/main.aux)
+pdflatex: Not reading from /etc/hostname (openin_any = p; no extended check).
+
+pdflatex: Not writing to /tmp/x/written.txt (openout_any = p; no extended check).
+
+
+! LaTeX Error: File `/etc/hostname.tex' not found.
+
+./main.tex:3: Emergency stop.
+l.3 \input{/etc/hostname}
+./main.tex:3:  ==> Fatal error occurred, no output PDF file produced!
+Latexmk: Errors, so I did not complete making targets
