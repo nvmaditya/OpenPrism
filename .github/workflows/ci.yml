@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  backend:
+    name: backend (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        # Git Bash on Windows, so every step reads the same on both systems.
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install the backend
+        run: python -m pip install -e "backend[dev]"
+      - name: Lint
+        working-directory: backend
+        run: ruff check src tests
+      - name: Check formatting
+        working-directory: backend
+        run: ruff format --check src tests
+      - name: Type check
+        if: runner.os == 'Linux'
+        working-directory: backend
+        run: pyright
+      - name: Test (no TeX)
+        working-directory: backend
+        run: pytest -m "not tex"
+
+  tex:
+    name: tex (TeX Live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: texlive/texlive:latest-small
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install Python
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3 python3-venv python3-pip
+          python3 --version
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install the LaTeX packages the templates need
+        run: |
+          tlmgr update --self
+          tlmgr install latexmk booktabs amsmath amsfonts graphics hyperref geometry titlesec lm
+          latexmk -v
+      - name: Install the backend
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -e "backend[dev]"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Test (real TeX)
+        working-directory: backend
+        run: pytest -m tex
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+
+  # The one required check: branch protection names this job, so lanes can
+  # change without touching the protection rules.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [backend, tex, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A CI job did not succeed."
+              exit 1
+            fi
+          done
