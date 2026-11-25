@@ -72,10 +72,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Install the LaTeX packages the templates need
+      - name: Install the LaTeX packages the templates and tests need
         run: |
           tlmgr update --self
-          tlmgr install latexmk booktabs amsmath amsfonts graphics hyperref geometry titlesec lm
+          tlmgr install latexmk latex-bin luatex biber biblatex logreq amsmath amsfonts graphics booktabs hyperref geometry titlesec tools l3kernel l3backend iftex
           latexmk -v
       - name: Install the backend
         run: |

@@ -13,7 +13,7 @@ Phase 0, "Clean slate": the project is renamed, licensed and made safe to run, a
 - The `prismtex serve` command (also `python -m prismtex serve`). It refuses to bind beyond loopback without `PRISMTEX_ACCESS_TOKEN`.
 - Host and Origin checks on every request, and an optional access token.
 - An example research paper (sections, an equation, a figure, a table, cross-references and a bibliography) as the default example; the résumé stays as a second example.
-- Compiles through latexmk with pdflatex, xelatex or lualatex, so bibliographies and cross-references resolve; the root file and engine are set per project.
+- Compiles through latexmk with pdflatex or xelatex, so bibliographies and cross-references resolve; the root file and engine are set per project. `lualatex` is stored as a project setting but disabled at compile time this release (see Security).
 - Structured diagnostics (file, line, severity, kind) in the compile response and a clickable diagnostics list in the UI.
 - Saves that carry the version the editor loaded (`ETag` and `If-Match`). The UI shows a conflict bar instead of overwriting a file that changed on disk.
 - File rename, single and bulk delete, and upload into any folder.
@@ -47,5 +47,7 @@ Phase 0, "Clean slate": the project is renamed, licensed and made safe to run, a
 ### Security
 
 - The API no longer allows every origin with credentials through CORS. It sends no CORS headers and rejects cross-site state-changing requests, so other websites cannot use it.
-- Closed the routes to code execution during a compile: the tool runner, a project `latexmkrc`, and argument injection through the root file. Shell escape is off, and TeX cannot open files outside the project through an absolute path or `..`.
+- Closed the routes to code execution during a compile: the tool runner, a project `latexmkrc`, and argument injection through the root file. Shell escape is off (`-no-shell-escape`, `-norc`), the latexmk command and environment are built only by the server, and the engine and helper tools are named by absolute path.
+- Hardened reading during a compile and made the docs honest about its limits. `openin_any=p`/`openout_any=p` stop ordinary `\input` and `\openout` from leaving the project, but TeX has read holes that bypass them, each now mitigated: pdfTeX's `\pdfobj ... file` (caught for pdflatex and xelatex by a post-run `.fls` audit that discards a PDF built from an outside read, with an `access_denied` error), LuaLaTeX's unrecorded Lua I/O (so `lualatex` is refused at compile time this release), and Biber's control-file code execution (routed through a server-owned guard running `biber --noconf`). On Linux `prctl(PR_SET_DUMPABLE, 0)` closes `/proc/<pid>/environ` reads for a same-uid reader; it does not cover a server run as root. On Windows a project file that could be run as a tool is refused (`409 unsafe_project_file`).
+- Known limit: the compile hardening is not an OS sandbox. Compiling a genuinely untrusted project still warrants a dedicated low-privilege account or a throwaway container; a real sandbox is a tracked follow-up for a later phase.
 - Project settings and logs can no longer be read or written through the file API.

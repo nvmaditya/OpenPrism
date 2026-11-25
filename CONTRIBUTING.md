@@ -13,12 +13,13 @@ Thank you for helping. This file covers how to set up, test and submit a change.
 You need Python 3.12 or newer, Node.js 22, and TeX Live or MiKTeX with `latexmk` (MiKTeX also needs Perl).
 
 ```bash
-pip install -e 'backend[dev]'          # the prismtex package, with pytest, ruff and pyright
+python3 -m venv .venv                                # a venv: not optional on every system, see below
+.venv/bin/python -m pip install -e 'backend[dev]'    # the prismtex package, with pytest, ruff and pyright
 cd frontend && npm ci && cd ..
-./start.sh                             # API on 127.0.0.1:8000, UI on 127.0.0.1:3000
+./start.sh                                           # API on 127.0.0.1:8000, UI on 127.0.0.1:3000
 ```
 
-Use a virtual environment if you like; `start.sh` picks up `.venv` in the repository root.
+The virtual environment is required on systems whose Python is externally managed (PEP 668): on Ubuntu 24.04, Debian and Homebrew Python a bare `pip install` fails with `externally-managed-environment`. On Windows Git Bash the interpreter is `.venv/Scripts/python`; on Debian and Ubuntu, `python3 -m venv` may first need `sudo apt install python3-venv`. `start.sh` picks up `.venv` in the repository root automatically.
 
 ## Tests and checks
 

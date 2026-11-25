@@ -13,7 +13,7 @@ A self-hosted LaTeX editor, being built around an AI agent that shows its work: 
 - **Files.** A file tree with upload into any folder, rename and delete. Saves carry the version the editor loaded, so a file changed on disk since you opened it is never silently overwritten.
 - **Editor.** A plain text editor for now. CodeMirror arrives in Phase 2.
 - **Outline.** The headings of every `.tex` file, each a link to its line.
-- **Compile.** latexmk with pdflatex, xelatex or lualatex, so bibliographies and cross-references resolve. Shell escape is off, TeX cannot open files outside the project by path, and build output stays outside the project folder. See [docs/compile.md](docs/compile.md).
+- **Compile.** latexmk with pdflatex or xelatex, so bibliographies and cross-references resolve (lualatex is accepted as a project setting but disabled at compile time this release). Shell escape is off, a project cannot choose its own flags, and build output stays outside the project folder. Reading files during a compile is hardened but not fully sandboxed, so read [docs/compile.md](docs/compile.md) before compiling projects you do not trust.
 - **Diagnostics.** Errors and warnings with file and line; clicking one opens the file at that line.
 - **PDF preview.** The compiled PDF in the browser's own PDF viewer. A pdf.js viewer with SyncTeX arrives in Phase 2.
 - **Project settings.** The root file and the TeX engine are set per project.
@@ -26,21 +26,24 @@ You need:
 - Python 3.12 or newer;
 - Node.js 22.
 
-Install the backend, then start the API and the UI together:
+Create a virtual environment, install the backend into it, then start the API and the UI together:
 
 ```bash
 git clone https://github.com/nvmaditya/OpenPrism.git
 cd OpenPrism
-pip install -e 'backend[dev]'
+python3 -m venv .venv
+.venv/bin/python -m pip install -e 'backend[dev]'
 ./start.sh
 ```
 
-Open <http://127.0.0.1:3000>. `start.sh` uses `.venv` if there is one, installs the UI's packages on first run, keeps data in `./data` and writes logs to `./logs`. Ctrl+C stops both servers. On Windows, run it from Git Bash.
+The virtual environment is not optional on every system: on Ubuntu 24.04, Debian and Homebrew Python, a bare `pip install` into the system interpreter fails with `externally-managed-environment` (PEP 668). On Windows Git Bash the interpreter is `.venv/Scripts/python`. On Debian and Ubuntu, `python3 -m venv` may first need `sudo apt install python3-venv`.
+
+Open <http://127.0.0.1:3000>. `start.sh` picks up `.venv` automatically, installs the UI's packages on first run, keeps data in `./data` and writes logs to `./logs`. Ctrl+C stops both servers. On Windows, run it from Git Bash.
 
 To run the two servers yourself, in two terminals:
 
 ```bash
-python -m prismtex serve        # API on http://127.0.0.1:8000
+.venv/bin/python -m prismtex serve        # API on http://127.0.0.1:8000
 ```
 
 ```bash
@@ -57,7 +60,7 @@ Settings come from `PRISMTEX_*` environment variables or a `.env` file in the di
 |---|---|---|
 | `PRISMTEX_DATA_DIR` | `data` | Where projects and their state live |
 | `PRISMTEX_HOST`, `PRISMTEX_PORT` | `127.0.0.1`, `8000` | Where the API listens |
-| `PRISMTEX_ACCESS_TOKEN` | unset | Required to bind beyond loopback |
+| `PRISMTEX_ACCESS_TOKEN` | unset | Required to bind beyond loopback; a LAN also needs the server's name or IP in `PRISMTEX_ALLOWED_HOSTS`, and in Phase 0 only API clients can send the token (see [SECURITY.md](SECURITY.md)) |
 | `PRISMTEX_COMPILE_TIMEOUT_S` | `120` | Seconds before a compile is stopped |
 
 The server binds 127.0.0.1 and refuses any other address unless an access token is set. Read [SECURITY.md](SECURITY.md) before exposing it to a network.
