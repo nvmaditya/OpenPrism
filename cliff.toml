@@ -1,0 +1,60 @@
+# git-cliff configuration (https://git-cliff.org): builds CHANGELOG.md from
+# Conventional Commit subjects, one section per release, grouped by type.
+# Release use: `git cliff --bump -o CHANGELOG.md`.
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project are documented in this file. The format follows \
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow \
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). At each release, \
+[git-cliff](https://git-cliff.org) generates the entries from the Conventional Commit \
+history, using `cliff.toml`.
+"""
+# The HTML comments in group names fix the section order; striptags removes them.
+body = """
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
+{% if commit.breaking %}**Breaking:** {% endif %}\
+{{ commit.message | upper_first }}\
+{% endfor %}
+{% endfor %}
+"""
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+# Link "(#123)" in squash-merge subjects to the pull request.
+commit_preprocessors = [
+  { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/nvmaditya/OpenPrism/pull/${2}))" },
+]
+# First match wins.
+commit_parsers = [
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^feat", group = "<!-- 0 -->Features" },
+  { message = "^fix", group = "<!-- 1 -->Bug fixes" },
+  { message = "^perf", group = "<!-- 2 -->Performance" },
+  { message = "^refactor", group = "<!-- 3 -->Refactoring" },
+  { message = "^docs", group = "<!-- 4 -->Documentation" },
+  { message = "^test", group = "<!-- 5 -->Tests" },
+  { message = "^build", group = "<!-- 6 -->Build" },
+  { message = "^ci", group = "<!-- 7 -->CI" },
+  { message = "^revert", group = "<!-- 8 -->Reverts" },
+  { message = "^chore|^style", group = "<!-- 9 -->Miscellaneous" },
+]
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9].*"
+topo_order = false
+sort_commits = "oldest"

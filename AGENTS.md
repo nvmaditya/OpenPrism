@@ -1,167 +1,67 @@
-# Prism Agent
+# AGENTS.md
 
-You are working inside the Prism app that helps researchers write and edit files using LaTeX.
+Guide for coding agents and human contributors working in this repository. [CONTRIBUTING.md](CONTRIBUTING.md) is the full contributor guide; this file is the short version.
 
-## Surfaces
+## What this is
 
-- **Dashboard** — list / create / import projects
-- **IDE** — file tree, Outline, Monaco `.tex` editor, floating “Ask anything” agent, Compiled PDF, Logs
+PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores projects and compiles them with latexmk, and a Next.js UI. The AI writing agent is being rebuilt and returns in Phase 1 (v0.1.0); there is no agent code in the tree today.
 
-## Shipping rule (OpenPrism)
+## Repository map
 
-- **Canonical remote:** [https://github.com/nvmaditya/OpenPrism](https://github.com/nvmaditya/OpenPrism) (`origin` / `main`).
-- **You must push every 100% tested feature** to that repo. Do not leave a completed, fully tested feature only on the local machine.
-- Definition of “100% tested”: automated tests (or documented smoke checks) pass for the slice’s acceptance criteria.
+- `backend/src/prismtex/`: the Python package.
+  - `main.py`: `create_app(settings=None, *, compiler=None)`, the composition root. There is no module-level app.
+  - `cli.py`, `__main__.py`: `prismtex serve`.
+  - `settings.py`: `Settings`, the only reader of `PRISMTEX_*` configuration.
+  - `layout.py`: `DataLayout`, every path under the data directory.
+  - `errors.py`: the `AppError` hierarchy and the error envelope.
+  - `security.py`: Host, access-token and Origin middleware.
+  - `migrate.py`: one-time migration of legacy `.prism/` folders.
+  - `workspace/`: path policy, text versions and line endings, `ProjectStore`, ZIP import, project templates.
+  - `outline/`: the outline parser.
+  - `compile/`: latexmk argv and environment, the hardened runner, log parsing, `Compiler`, compile logs.
+  - `api/`: FastAPI routers.
+- `backend/tests/`: pytest. Tests marked `tex` need a real TeX installation.
+- `frontend/`: the Next.js UI. `lib/api.ts` is the only API client.
+- `docs/`: configuration, compile hardening, design documents, ADRs and phase specs.
 
-### Required sequence after a feature (automatic via Grok hooks)
+## Commands
 
-1. **Implement** the feature.
-2. **Test** until green (`pytest` preferred — a successful run marks the ship gate).
-3. On **turn end**, project hooks **auto-ship**:
-   - stamp `docs/SHIPLOG.md` + `PLAN.md` last-ship line
-   - `git commit` if dirty
-   - `git push origin main` if ahead
-4. If tests or push fail, the **Stop** hook blocks and you must fix, then finish again.
+Setup, from the repository root: `pip install -e 'backend[dev]'`, then `cd frontend && npm ci`. Run both servers with `./start.sh`.
 
-Still prefer meaningful commits and agent-facing `AGENTS.md` updates when the surface changes; the hook guarantees a docs stamp + remote sync even if you forget.
+From `backend/`:
 
-Hooks: `.grok/hooks/feature-ship.json` → `bin/auto_ship.py`. Trust with `/hooks-trust`; reload with `/hooks` → `r`.
+```bash
+pytest -m "not tex"     # fast lane
+pytest -m tex           # needs latexmk; fails, never skips, without it
+ruff check src tests && ruff format --check src tests
+pyright
+```
 
-## Hard rules
+From `frontend/`: `npm run lint`, `npm run typecheck`, `npm run build`.
 
-1. **Workspace-only edits.** Limit file edits to the current project workspace directory. Never write outside the project root.
+A change is done when all of these pass.
 
-2. **Preview isolation.** If you need to view the compiled PDF, render page images into the configured preview root (e.g. `data/previews` or a temp `prism-pdf-previews` directory) and use `view_image` there. Never write generated PDF preview images such as `main-page-1.png` into the project workspace unless the user explicitly asks to add that image to the paper.
+## Conventions
 
-3. **DO NOT CREATE NEW PYTHON virtual environments.** Do not run `python -m venv`, `virtualenv`, or similar.
+- **Commits:** Conventional Commits (`feat(compile): ...`, `fix: ...`, `docs: ...`).
+- **Line endings:** LF in every text file, UTF-8.
+- **Review-first:** agent changes reach a project only as a proposal the user accepts hunk by hunk ([ADR 0003](docs/adr/0003-review-first-proposals.md)).
+- **Project folders hold only user files:** app state, logs and build output go under the `DataLayout` paths `state/`, `build/` and `history/` ([ADR 0004](docs/adr/0004-project-folders-hold-only-user-files.md)).
+- **Paths:** every path that comes from a request or a project goes through `workspace.paths` (`check_relative_path`, `resolve_in`).
+- **Compile commands:** the latexmk argv and environment are built only in `prismtex.compile.argv`, from a validated root file and engine.
+- **Errors:** raise an `AppError` subclass; every error response has the body `{"detail": {"code", "message", ...}}`.
+- **The UI calls `/api/...` on its own origin only** ([ADR 0005](docs/adr/0005-same-origin-api-no-login-on-localhost.md)).
+- **Tests** build `Settings(_env_file=None, data_dir=tmp_path, ...)` so a developer's `.env` never leaks in, and use `TestClient(app, base_url="http://127.0.0.1:8000")`, because the Host check rejects `testserver`.
+- **Dependencies:** a new runtime dependency needs an issue and agreement first.
+- **Docs describe what exists.** Update them in the same change as the code.
+- **Words:** use the terms in [CONTEXT.md](CONTEXT.md).
 
-4. **Relative paths only in LaTeX.** You must only use paths relative to the current workspace directory in any LaTeX you write. Do not use absolute paths that start with `/` (or drive letters) in `.tex` files.
+## Design documents
 
-5. **Proofread by edit.** If asked to proofread a section, always edit the relevant `.tex` file directly instead of only suggesting text in chat.
+Before changing how an area behaves, read its section in these:
 
-6. **No pip install.** Do not install new Python dependencies. You do not have the ability to do so. Use only preinstalled packages (`numpy`, `scipy`, `pandas`, `matplotlib`, `Pillow`, `pypdf`, `seaborn`, `plotly`, `kaleido`, `plotnine`, `networkx`, `sympy`, and the project runtime).
-
-7. Prefer built-in packages directly for analysis, plotting, PDF parsing, and symbolic math.
-
-## Project & FS APIs (Phase 1–2)
-
-- `GET/POST /api/projects` — list / create (`kind`: `blank` | `example`)
-- `POST /api/projects/import` — zip import (zip-slip rejected)
-- `GET/DELETE /api/projects/{id}`
-- `GET /api/projects/{id}/files` — flat file path list
-- `GET /api/projects/{id}/tree` — **structured** directory tree (dirs + files + sizes); optional `?path=` subdir
-- `POST /api/projects/{id}/upload` — multipart upload (`file`, optional form `path` dest dir/file); default `prism-uploads/<filename>`
-- `GET/PUT /api/projects/{id}/files/{path}` — read/write project files (text JSON or base64 for binary)
-
-### FS sandbox (agents must respect; server enforces)
-
-- All paths are **relative to the project root** only.
-- Reject `..` segments and absolute paths (`/…`, `C:\…`); never write outside the project storage root.
-- Prefer `prism-uploads/` for user assets (images, etc.).
-
-## LLM providers + agent (Phase 3)
-
-### Provider factory (`app.agent.providers.get_chat_model`)
-
-Switch backend via env only (no source edits):
-
-| `PRISM_LLM_PROVIDER` | Construction |
-|----------------------|--------------|
-| `groq` (default) | `ChatOpenAI` → `https://api.groq.com/openai/v1` using **`GROQ_API_KEY`** |
-| `openai` / `custom` | `ChatOpenAI` (+ optional `PRISM_LLM_BASE_URL`); falls back to `GROQ_API_KEY` if OpenAI key empty |
-| `ollama` | `ChatOpenAI` OpenAI-compatible; default base `http://127.0.0.1:11434/v1` |
-| `azure` | `AzureChatOpenAI`; `PRISM_LLM_MODEL` = deployment; `PRISM_LLM_BASE_URL` = endpoint |
-| `anthropic` | `ChatAnthropic` |
-
-Also: `PRISM_LLM_MODEL` (Groq default `llama-3.3-70b-versatile`), `PRISM_LLM_API_KEY`, `PRISM_LLM_BASE_URL`, **`GROQ_API_KEY`** (from monorepo `.env`).
-
-### Agent graph (`app.agent.graph.run_agent` / `build_agent`)
-
-- LangGraph ReAct agent bound to a **project id**.
-- FS tools (real `ProjectStore` + path sandbox):
-  - `read_project_file(path)`
-  - `write_project_file(path, content)`
-  - `edit_project_file(path, old_str, new_str)`
-  - `list_project_files()`
-  - `add_tex_input(path, content)` — new section file + one `\input` in `main.tex`
-  - `check_latex(path?)` — static braces/environments
-  - `compile_project(main_file?)` — allowlisted TeX compile
-  - `extract_pdf_text(path?)` — `pypdf` text from compiled PDF
-- After every chat turn a **host verify hook** (not the model) runs static + structure + compile + PDF extract. Failure **rolls back** to the pre-turn snapshot. `done` includes `trace_id`, `verified`, `rollback`.
-- Agent traces persist as `.prism/logs/{trace_id}` with `kind: "agent"` (same list/get as compile logs).
-- Inject a chat model for tests (e.g. scripted tool-calling model); production uses `get_chat_model(settings)`.
-- **Streaming chat (Phase 7):** `POST /api/projects/{id}/chat` with `{"message":"..."}` returns SSE (`text/event-stream`). Events: `token`, `tool_start`, `tool_end`, `file_changed`, `error`, `done`. FS writes surface as `file_changed` and land under that project only.
-
-## LaTeX tools + compile (Phase 4)
-
-Allowlisted binaries only (server rejects others):  
-`latexmk`, `pdflatex`, `xelatex`, `lualatex`, `latex`, `bibtex`, `biber`, `makeindex`, `dvipdfmx`, `kpsewhich`.
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/api/projects/tools` | List allowlisted tool names |
-| `POST` | `/api/projects/{id}/compile` | Compile `main_file` with `engine` (default `latexmk`); returns `log_id`, `success`, `log`, optional `pdf_path` |
-| `POST` | `/api/projects/{id}/tools/run` | Run one allowlisted tool with `args` in project cwd |
-| `GET` | `/api/projects/{id}/logs` | List compile/tool run metas |
-| `GET` | `/api/projects/{id}/logs/{log_id}` | Fetch full log text + meta |
-
-- Subprocess **cwd** = project root; no shell; bare tool names only (no path-like tool).
-- Logs stored under project `.prism/logs/{log_id}.log` (+ `.json` meta), still inside the project workspace.
-- Prefer `latexmk -pdf` for multi-pass docs; `pdflatex` for simple PDF builds.
-- Compile response includes `log_id`, `log_url`, `pdf_path`, `pdf_available`, `pdf_url` when a PDF is produced.
-
-## PDF serve + previews (Phase 5)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/api/projects/{id}/pdf?path=main.pdf` | Serve compiled PDF bytes (`application/pdf`) from project workspace |
-| `POST` | `/api/projects/{id}/previews/render` | Rasterize pages into **preview root** only; returns `run_id`, `page_urls` |
-| `GET` | `/api/projects/{id}/previews/{run_id}` | List page images for a render run |
-| `GET` | `/api/projects/{id}/previews/{run_id}/page-N.png` | Fetch one page PNG |
-
-### Preview isolation (hard rule)
-
-- Page images (`page-1.png`, …) are written only under `PRISM_PREVIEW_ROOT/{project_id}/{run_id}/`.
-- **Never** write generated PDF preview images into the project paper tree by default.
-- Use `view_image` / preview URLs from the preview root, not from the project workspace.
-
-## Skills system (Phase 6)
-
-Progressive `SKILL.md` packages. Catalog ships with the app; installs land under `PRISM_SKILL_HOME`.
-
-### Catalog (five)
-
-| Skill | Role |
-|-------|------|
-| `imagegen` | Raster image generation/editing guidance |
-| `openai-docs` | Official OpenAI product/API guidance |
-| `plugin-creator` | Scaffold `.codex-plugin/plugin.json` |
-| `skill-creator` | Author/revise skill packages |
-| `skill-installer` | Install catalog skills into skill-home |
-
-### APIs
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/api/skills` | List catalog + skill-home (home overrides name clashes) |
-| `GET` | `/api/skills/{name}` | Load full body + frontmatter |
-| `POST` | `/api/skills/install` | `{ "name" }` copy catalog → skill-home |
-| `POST` | `/api/skills/create` | skill-creator: write new `SKILL.md` under skill-home |
-| `POST` | `/api/skills/plugin-scaffold` | plugin-creator: `.codex-plugin/plugin.json` under project or skill-home/plugins |
-
-Live imagegen/GitHub install require credentials and are optional; list/load/local install/create/scaffold are the core platform.
-
-## Changelog
-
-- Phase 0: Scaffold monorepo; document hard rules from source agents.md; health API only (no agent graph yet).
-- Phase 8 UI: Next dashboard + project IDE for feature verification; Groq via `GROQ_API_KEY`.
-- Shipping: require push of every 100% tested feature to github.com/nvmaditya/OpenPrism.
-- Phase 1: Multi-project domain — create/list/delete blank+example, zip import with zip-slip rejection, cross-project isolation, file read/write under project root.
-- Phase 2: Structured workspace tree + multipart upload; hardened path sandbox on tree/read/write/upload (`../` and absolute rejected).
-- Phase 3: Provider-pluggable `get_chat_model` (openai/azure/ollama/anthropic/custom) + LangGraph agent with project-scoped FS tools; mock-driven tests.
-- Phase 4: Allowlisted TeX subprocess runner; project compile + retrievable logs (`latexmk`/`pdflatex`/…).
-- Phase 5: PDF serve (`/pdf`) + page previews under isolated `PRISM_PREVIEW_ROOT` (pdftoppm or Pillow fallback).
-- Phase 6: Progressive skills — five catalog packages, list/load/install/create, plugin scaffold; skill-home via `PRISM_SKILL_HOME`.
-- Resume Ask-anything: modular example (`sections/` + `\input`), `add_tex_input`, host verify+rollback, agent `trace_id` on the existing logs surface.
-- Phase 9: `GET /api/projects/{id}/outline` (heading + 1-based line); dashboard zip Import; IDE Outline jump + Project Info/Versions/Comments stubs. Agent model errors no longer roll back a passing document.
-
+- [docs/plans/2026-11-25-phase-0-clean-slate.md](docs/plans/2026-11-25-phase-0-clean-slate.md): the binding spec for the current code.
+- [docs/design/2026-11-24-revamp-design.md](docs/design/2026-11-24-revamp-design.md): goals, decisions D1 to D17, architecture, security model, roadmap.
+- [docs/design/2026-11-24-agent-design.md](docs/design/2026-11-24-agent-design.md): the Phase 1 agent.
+- [docs/adr/](docs/adr): decisions worth remembering.
+- [docs/configuration.md](docs/configuration.md) and [docs/compile.md](docs/compile.md): settings, and what the compile hardening does.
