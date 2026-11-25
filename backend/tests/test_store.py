@@ -301,6 +301,80 @@ def test_writes_leave_no_temp_files(store: ProjectStore, pid: str) -> None:
     assert names == ["main.tex"]
 
 
+def test_atomic_write_temp_files_are_hidden_and_reserved(store: ProjectStore, pid: str) -> None:
+    root = store.layout.project_dir(pid)
+    # A temp file left by a crash mid-write (also tried in a subfolder).
+    (root / ".prismtex-abc.tmp").write_bytes(b"partial")
+    (root / "sub").mkdir()
+    (root / "sub" / ".prismtex-xyz.tmp").write_bytes(b"partial")
+    assert paths_of(store, pid) == {"main.tex"}
+    tree = store.tree(pid)
+    assert {child["name"] for child in tree["children"]} == {"main.tex", "sub"}
+    assert store.tree(pid, "sub")["children"] == []
+    # The reserved name cannot be read or written through the file API.
+    for call in (
+        lambda: store.read(pid, ".prismtex-abc.tmp"),
+        lambda: store.write(pid, ".prismtex-new.tmp", "x", None),
+        lambda: store.write_bytes(pid, "sub/.prismtex-new.tmp", b"x"),
+        lambda: store.upload(pid, filename=".prismtex-up.tmp", data=b"x"),
+    ):
+        with pytest.raises(PathPolicyError) as info:
+            call()
+        assert info.value.reason == "internal"
+
+
+def test_remove_stale_temp_files_at_startup(store: ProjectStore, pid: str) -> None:
+    from prismtex.workspace import remove_stale_temp_files
+
+    root = store.layout.project_dir(pid)
+    (root / ".prismtex-abc.tmp").write_bytes(b"partial")
+    (root / "sub").mkdir()
+    (root / "sub" / ".prismtex-xyz.tmp").write_bytes(b"partial")
+    remove_stale_temp_files(store.layout)
+    assert not (root / ".prismtex-abc.tmp").exists()
+    assert not (root / "sub" / ".prismtex-xyz.tmp").exists()
+    assert (root / "main.tex").exists()
+
+
+def test_write_retries_permission_error_then_succeeds(
+    store: ProjectStore, pid: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from prismtex.workspace import store as store_module
+
+    calls = {"n": 0}
+    real_replace = os.replace
+
+    def flaky(src: Any, dst: Any) -> None:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError("sharing violation")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(store_module.os, "replace", flaky)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _s: None)
+    written = store.write(pid, "main.tex", "survived\n", None)
+    assert written.text == "survived\n"
+    assert calls["n"] == 3
+
+
+def test_write_raises_file_busy_when_replace_keeps_failing(
+    store: ProjectStore, pid: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from prismtex.errors import FileBusy
+    from prismtex.workspace import store as store_module
+
+    def always_busy(src: Any, dst: Any) -> None:
+        raise PermissionError("sharing violation")
+
+    monkeypatch.setattr(store_module.os, "replace", always_busy)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _s: None)
+    with pytest.raises(FileBusy) as info:
+        store.write(pid, "main.tex", "x", None)
+    assert info.value.extra == {"path": "main.tex"}
+    # The temp file is cleaned up even when the replace never lands.
+    assert os.listdir(store.layout.project_dir(pid)) == ["main.tex"]
+
+
 @pytest.mark.parametrize("path", [".git/config", ".prism/meta.json", ".GIT/HEAD", ".Prism/x"])
 def test_internal_folders_are_refused(store: ProjectStore, pid: str, path: str) -> None:
     with pytest.raises(PathPolicyError) as info:

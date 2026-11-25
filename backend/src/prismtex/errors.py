@@ -133,6 +133,35 @@ class PayloadTooLarge(AppError):
         super().__init__(f"This is larger than the {shown} MB limit.", limit_mb=shown)
 
 
+class FileBusy(AppError):
+    status = 409
+    code = "file_busy"
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"'{path}' is in use, probably by a compile; try again in a moment.", path=path
+        )
+
+
+class ProjectBusy(AppError):
+    status = 409
+    code = "project_busy"
+
+    def __init__(self, project_id: str) -> None:
+        super().__init__(
+            "This project is compiling right now; try again once the compile finishes.",
+            project_id=project_id,
+        )
+
+
+class UnsafeProjectFile(AppError):
+    status = 409
+    code = "unsafe_project_file"
+
+    def __init__(self, path: str, message: str | None = None) -> None:
+        super().__init__(message or f"'{path}' cannot be used safely on this system.", path=path)
+
+
 class LogNotFound(AppError):
     status = 404
     code = "log_not_found"

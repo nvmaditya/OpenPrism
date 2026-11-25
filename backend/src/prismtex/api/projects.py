@@ -7,8 +7,8 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from prismtex.api.deps import SettingsDep, StoreDep
-from prismtex.errors import PayloadTooLarge
+from prismtex.api.deps import CompilerDep, SettingsDep, StoreDep
+from prismtex.errors import PayloadTooLarge, ProjectBusy
 from prismtex.workspace import UNSET, Engine, ProjectInfo, ProjectKind, TemplateKind
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -85,6 +85,12 @@ def update_project(project_id: str, body: UpdateProject, store: StoreDep) -> Pro
 
 
 @router.delete("/{project_id}", status_code=204)
-def delete_project(project_id: str, store: StoreDep) -> Response:
+def delete_project(project_id: str, store: StoreDep, compiler: CompilerDep) -> Response:
+    # A compile holds the project folder open (on Windows, TeX's own working
+    # directory), so removing it mid-compile half-deletes it. Refuse instead,
+    # without blocking this thread on the compile lock.
+    is_compiling = getattr(compiler, "is_compiling", None)
+    if callable(is_compiling) and is_compiling(project_id):
+        raise ProjectBusy(project_id)
     store.delete(project_id)
     return Response(status_code=204)

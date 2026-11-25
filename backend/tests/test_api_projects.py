@@ -7,6 +7,7 @@ from collections.abc import Callable
 from fastapi.testclient import TestClient
 
 from prismtex.settings import Settings
+from prismtex.workspace import ProjectStore
 
 PROJECT_KEYS = {"id", "name", "kind", "created_at", "updated_at", "root_file", "engine"}
 
@@ -30,6 +31,8 @@ def test_docs_live_under_api(client: TestClient) -> None:
     assert client.get("/api/docs").status_code == 200
     assert client.get("/docs").status_code == 404
     assert client.get("/openapi.json").status_code == 404
+    # The Swagger OAuth2 redirect default lives at /docs/..., outside /api; drop it.
+    assert client.get("/docs/oauth2-redirect").status_code == 404
 
 
 def test_create_list_get_delete(client: TestClient) -> None:
@@ -173,3 +176,32 @@ def test_import_requires_a_file(client: TestClient) -> None:
     response = client.post("/api/projects/import", data={"name": "x"})
     assert response.status_code == 422
     assert response.json()["detail"]["field"] == "file"
+
+
+def test_delete_is_refused_while_compiling(
+    make_client: Callable[..., TestClient], store: ProjectStore
+) -> None:
+    pid = store.create().id
+
+    class BusyCompiler:
+        def is_compiling(self, project_id: str) -> bool:
+            return project_id == pid
+
+    client = make_client(compiler=BusyCompiler())
+    response = client.delete(f"/api/projects/{pid}")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "project_busy"
+    # The project folder is untouched; the delete can be retried after the compile.
+    assert client.get(f"/api/projects/{pid}").status_code == 200
+
+
+def test_delete_works_when_compiler_lacks_is_compiling(
+    make_client: Callable[..., TestClient], store: ProjectStore
+) -> None:
+    pid = store.create().id
+
+    class PlainCompiler:
+        pass
+
+    client = make_client(compiler=PlainCompiler())
+    assert client.delete(f"/api/projects/{pid}").status_code == 204

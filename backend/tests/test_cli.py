@@ -93,3 +93,19 @@ def test_python_dash_m(tmp_path: Path) -> None:
     )
     assert result.returncode == 0
     assert result.stdout.strip() == "prismtex 0.1.0.dev0"
+
+
+def test_harden_process_clears_dumpable_on_linux() -> None:
+    if sys.platform != "linux":
+        pytest.skip("PR_SET_DUMPABLE is Linux-only")
+    import ctypes
+
+    cli._harden_process()
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    # PR_GET_DUMPABLE (3) returns the flag _harden_process cleared with PR_SET_DUMPABLE (4).
+    assert libc.prctl(3, 0, 0, 0, 0) == 0
+
+
+def test_harden_process_is_a_noop_off_linux(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    cli._harden_process()  # must not raise

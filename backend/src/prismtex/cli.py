@@ -44,6 +44,8 @@ def serve(*, host: str | None = None, port: int | None = None) -> int:
         )
         return 2
 
+    _harden_process()
+
     # Imported here so `prismtex --help` stays fast and import errors in the
     # app surface only when serving.
     from prismtex.main import create_app
@@ -57,3 +59,27 @@ def serve(*, host: str | None = None, port: int | None = None) -> int:
         server_header=False,
     )
     return 0
+
+
+def _harden_process() -> None:
+    """On Linux, make the server's /proc/<pid> unreadable to same-uid processes.
+
+    A compile's TeX engine runs under the same uid as the server. prctl
+    PR_SET_DUMPABLE=0 clears the process's dumpable flag, which makes
+    /proc/<pid>/environ, /maps and /mem unreadable to a same-uid reader, so an
+    engine that slips its argv/env filter still cannot read the server's secrets
+    through /proc (this also defeats `\\pdfobj file {/proc/<pid>/environ}`).
+
+    Best effort only: it is a no-op off Linux and never blocks startup. A server
+    running as root is not covered, because root bypasses the dumpable check.
+    """
+    if sys.platform != "linux":
+        return
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        PR_SET_DUMPABLE = 4
+        libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)
+    except (OSError, AttributeError, ValueError):
+        pass
