@@ -26,7 +26,7 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
 
 ## Commands
 
-Setup, from the repository root: `pip install -e 'backend[dev]'`, then `cd frontend && npm ci`. Run both servers with `./start.sh`.
+Setup, from the repository root: `python3 -m venv .venv && .venv/bin/python -m pip install -e 'backend[dev]'`, then `cd frontend && npm ci`. Run both servers with `./start.sh`, which picks up `.venv`. The venv is not optional on systems with an externally-managed Python (PEP 668: Ubuntu 24.04, Debian, Homebrew), where a bare `pip install` fails; on Windows Git Bash the interpreter is `.venv/Scripts/python`, and Debian and Ubuntu may need `apt install python3-venv`.
 
 From `backend/`:
 
