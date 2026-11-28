@@ -682,6 +682,14 @@ class BudgetGuard:
         self._cache_write = 0
         self._estimated = False
 
+    @property
+    def limits(self) -> Limits:
+        return self._limits
+
+    @property
+    def spec(self) -> ModelSpec:
+        return self._spec
+
     def step(self) -> None:
         """Count one model call; raises `BudgetExhausted("steps" | "wall_time")`."""
         self._check_time()

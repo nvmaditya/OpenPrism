@@ -417,6 +417,10 @@ class ContextAssembler:
         """The estimated prompt size of `call`: system, tools, response schema and messages."""
         return sum(self._call_parts(call).values())
 
+    def breakdown(self, call: ModelCall) -> dict[str, int]:
+        """The estimated tokens of each part of `call`: system, tools, messages, schema."""
+        return self._call_parts(call)
+
     def near_limit(self, call: ModelCall, spec: ModelSpec) -> bool:
         """True when the estimate is within 20% of the limit, where an exact count decides."""
         limit = TokenBudget.for_spec(spec, call.max_output_tokens).input

@@ -37,6 +37,7 @@ __all__ = [
     "escape_damage",
     "insert_after_line",
     "known_commands",
+    "numbered_around",
     "render_view",
     "replace_lines",
     "str_replace",
@@ -157,6 +158,23 @@ def _numbered(lines: Sequence[str], first: int) -> str:
 
 def _span_words(start: int, end: int) -> str:
     return f"line {start}" if start == end else f"lines {start}-{end}"
+
+
+def numbered_around(text: str, line: int, radius: int) -> str:
+    """Lines line-radius..line+radius of text, numbered, with " > " marking `line`.
+
+    Other lines start with three spaces, so "   41| a" and " > 42| b" align.
+    Empty when `line` is outside the text.
+    """
+    lines = _split(text)
+    if not 1 <= line <= len(lines):
+        return ""
+    first, last = max(1, line - radius), min(len(lines), line + radius)
+    width = len(str(last))
+    return "\n".join(
+        (" > " if n == line else "   ") + str(n).rjust(width) + "| " + lines[n - 1]
+        for n in range(first, last + 1)
+    )
 
 
 # ---- views -------------------------------------------------------------------
@@ -466,7 +484,9 @@ def known_commands(texts: Iterable[str]) -> frozenset[str]:
     return _data_lines("commands.txt") | defined
 
 
-def escape_damage(value: str, known: frozenset[str]) -> EscapeDamage | None:
+def escape_damage(
+    value: str, known: frozenset[str], *, skip: frozenset[DamageKind] = frozenset()
+) -> EscapeDamage | None:
     """Detect LaTeX whose backslashes a JSON decoder consumed; never repairs.
 
     Checked in this order, the first hit wins:
@@ -478,8 +498,10 @@ def escape_damage(value: str, known: frozenset[str]) -> EscapeDamage | None:
     3. a backslash that starts a control word, then "n", then a non-letter or
        the end: \\n is not a LaTeX command (unless the Project defines it), so
        it is a doubly escaped line break.
+
+    `skip` leaves out the checks of the kinds it names; the others still run.
     """
-    offset = control_char(value)
+    offset = control_char(value) if "control_char" not in skip else None
     if offset is not None:
         ch = value[offset]
         run = _LETTER_RUN.match(value, offset + 1)
@@ -497,6 +519,8 @@ def escape_damage(value: str, known: frozenset[str]) -> EscapeDamage | None:
     words = _data_lines("words.txt")
     for found in _TAB_OR_LF_LETTERS.finditer(value):
         ch, letters = found.group(0)[0], found.group(1)
+        if ("tab_letters" if ch == "\t" else "lf_letters") in skip:
+            continue
         name = _JSON_LETTER[ch] + letters
         if name in known and letters not in words:
             return EscapeDamage(
@@ -506,7 +530,7 @@ def escape_damage(value: str, known: frozenset[str]) -> EscapeDamage | None:
                 command="\\" + name,
             )
 
-    if "n" not in known:
+    if "n" not in known and "literal_backslash_n" not in skip:
         for found in _BACKSLASHES_N.finditer(value):
             # An even run of backslashes is a series of \\ line breaks and the
             # n is plain text; an odd run ends in a backslash that starts \n.
