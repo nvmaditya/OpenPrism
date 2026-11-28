@@ -1,6 +1,6 @@
 # Configuration
 
-The server reads its settings from environment variables with the `PRISMTEX_` prefix. It also reads a `.env` file in the directory it starts from, and the process environment overrides `.env`. `.env.example` in the repository root lists every variable with its default. Every variable is optional.
+The server reads its settings from environment variables with the `PRISMTEX_` prefix, plus the Anthropic key (`ANTHROPIC_API_KEY`). It also reads a `.env` file in the directory it starts from, and the process environment overrides `.env`. `.env.example` in the repository root lists every variable with its default. Every variable is optional.
 
 ## Server
 
@@ -34,12 +34,54 @@ The UI's `/api/*` proxy caps the size of a request body it will forward, so that
 
 ## Model providers
 
-There are no provider settings yet. The writing agent is being rebuilt, and its provider variables (Ollama, Anthropic and OpenAI-compatible endpoints) arrive with it in Phase 1.
-
-## Cost ledger
+The writing agent runs each Turn on one model. A model ref names the provider and the model: `ollama:<model>`, `anthropic:<model>`, or `<preset>:<model>` for the OpenAI-compatible endpoint.
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `PRISMTEX_DEFAULT_MODEL` | unset | The model ref used when a Project sets none. Unset, the server picks the first available of: the Ollama default `ollama:qwen3:4b-instruct-2507-q4_K_M` (once Ollama reports it pulled), `anthropic:claude-opus-5-5` (when an Anthropic key is set), and the configured OpenAI-compatible model. With none available, a Turn is refused with setup instructions. |
+| `PRISMTEX_OLLAMA_URL` | `http://127.0.0.1:11434` | The Ollama server. The server asks it which models are pulled at startup and when the health check is run with `probe=true`; nothing else is contacted to check health. |
+| `PRISMTEX_OLLAMA_NUM_CTX` | the catalog's | The context window pinned for every Ollama model: 16384 for qwen3 4B, 12288 for Llama 3.1 8B and 8192 for a model the catalog lacks. Ollama reloads a model when this changes, so every request sends the same value. |
+| `ANTHROPIC_API_KEY` | unset | The Anthropic key. `CLAUDE_API_KEY` and `PRISMTEX_ANTHROPIC_API_KEY` are accepted as other names for it, in that order of precedence. Claude models are paid, so they also need the cost ledger below. Claude Haiku, Sonnet and Opus 5.5 are listed; Opus 5.5 is the default. |
+| `PRISMTEX_ANTHROPIC_FALLBACKS` | `off` | `default` enables Anthropic's server-side refusal fallback for Opus 5.5 and Sonnet 5.5. Their reservations are then priced at the dearer of the model and its fallback. |
+| `PRISMTEX_OPENAI_PRESET` | unset | The OpenAI-compatible endpoint: `openai`, `openrouter`, `vllm` or `lmstudio` (see the table below). One endpoint is configured at a time. |
+| `PRISMTEX_OPENAI_MODEL` | unset | The model on that endpoint. Only the ref `<preset>:<model>` built from these two variables resolves. |
+| `PRISMTEX_OPENAI_API_KEY` | unset | The endpoint's key. It is sent only to the preset's base URL. An empty value counts as unset. |
+| `PRISMTEX_OPENAI_BASE_URL` | unset | The base URL for `vllm` (required) and `lmstudio` (optional). `openai` and `openrouter` ignore it: their URLs are fixed, so their keys cannot be sent anywhere else. |
+| `PRISMTEX_OPENAI_CONTEXT` | `32768` | The model's context window, in tokens. Below 32768 the model runs the guided Profile. |
+| `PRISMTEX_OPENAI_PRICE` | unset | `input,output` in USD per million tokens, such as `0.4,1.6`. Cached input is charged at the input rate, since the endpoint's cache rate is unknown. Setting it meters the model as paid; the paid presets are refused without it. |
+| `PRISMTEX_TRACE_PROMPTS` | `0` | `1` keeps the full prompt text in agent Traces. |
+| `PRISMTEX_FAKE_SCRIPT` | unset | A script file that enables the `fake:scripted` model. For the end-to-end tests only. |
+
+Keys are read only from these variables or `.env`, never from a Project, and never appear in events, Traces, errors or health reports. Variables meant for other tools, such as `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID` or `OPENAI_CUSTOM_HEADERS`, are never used, so a key cannot reach an endpoint it was not set for.
+
+### OpenAI-compatible presets
+
+| Preset | Base URL | Key | Paid |
+|---|---|---|---|
+| `openai` | `https://api.openai.com/v1` (fixed) | required | yes |
+| `openrouter` | `https://openrouter.ai/api/v1` (fixed) | required | yes |
+| `vllm` | `PRISMTEX_OPENAI_BASE_URL` (required) | optional | only when `PRISMTEX_OPENAI_PRICE` is set |
+| `lmstudio` | `http://127.0.0.1:1234/v1`, or `PRISMTEX_OPENAI_BASE_URL` | optional | only when `PRISMTEX_OPENAI_PRICE` is set |
+
+There is no default endpoint. The `vllm` preset points the agent at any server that speaks the OpenAI Chat Completions API with streaming and tool calls: a vLLM server, llama.cpp's `llama-server`, or a hosted service. For a vLLM server on the same machine:
+
+```sh
+PRISMTEX_OPENAI_PRESET=vllm
+PRISMTEX_OPENAI_MODEL=Qwen/Qwen3-8B
+PRISMTEX_OPENAI_BASE_URL=http://127.0.0.1:8001/v1
+PRISMTEX_OPENAI_CONTEXT=32768
+```
+
+Use the model name the server lists at `<base URL>/models`, and the context window the server was started with. A key, if the server wants one, goes in `PRISMTEX_OPENAI_API_KEY`; without one the request carries the placeholder `unused`. If the endpoint charges for use, also set `PRISMTEX_OPENAI_PRICE`, so every call is metered against the cost ledger and the caps below. LM Studio models get text tool-call recovery, since some of them write tool calls as text.
+
+## Cost guard and ledger
+
+Paid models (Claude, the `openai` and `openrouter` presets, and any endpoint with `PRISMTEX_OPENAI_PRICE`) run only against the cost ledger. Before each paid call the server reserves its worst-case cost; if that could cross a cap, the call's output limit is lowered to fit, or the call is not sent.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PRISMTEX_MAX_USD_PER_TURN` | `1.00` | The most one Turn may spend on paid model calls, in USD. |
+| `PRISMTEX_COST_STOP_USD` | unset | A cumulative stop over the ledger, in USD: no paid call is sent once settled spend plus open reservations could cross it. An empty value counts as unset. |
 | `PRISMTEX_LEDGER_PATH` | `<data_dir>/state/ledger.jsonl` | The cost ledger of paid model calls. Each paid call is reserved in it, fsynced, before it is sent, and settled after, by the app and by eval runs alike, so spend adds up across runs. Keep it outside the data directory and back it up, so deleting a data folder never resets the count. An empty value counts as unset. |
 
 The ledger is a JSON Lines file. Two files sit beside it: `<ledger>.mutex`, an empty file that lets one process at a time write, which stays; and `<ledger>.lock`, which exists only while an eval run holds the ledger. A run that crashes can leave the `.lock` file behind, and the next run then refuses to start and names it: delete it once no other run is active.

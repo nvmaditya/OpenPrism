@@ -3,7 +3,8 @@
 An adapter turns one neutral `ModelCall` into one Provider request and streams neutral
 `ModelEvent`s back: text, thinking and tool-call events, then exactly one `Stopped`, or
 it raises `ProviderError`. Closing the iterator cancels the request. A `ModelResolver`
-picks the adapter for a model ref. `catalog.spec(ref)` gives a model's capabilities.
+picks the adapter for a model ref; `catalog.ProviderRegistry` is the one built from
+`Settings`. `catalog.spec(ref)` gives a model's capabilities.
 """
 
 from __future__ import annotations
