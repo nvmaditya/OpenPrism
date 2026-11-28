@@ -7,7 +7,8 @@ each case. Only the absolute build-folder paths were rewritten, to
 /data/build/<case>/out. bib_missing_db.blg and bib_no_bibdata.blg come from
 running bibtex by hand, because latexmk skips BibTeX in those cases.
 lua_err and spaces_ok were compiled with lualatex; this machine lacks
-luaotfload, hence their font warnings.
+luaotfload, hence their font warnings. texlive-kinds and miktex-kinds come
+from elsewhere; tests/compile/test_log_kinds.py says how they were made.
 """
 
 from __future__ import annotations
@@ -30,6 +31,22 @@ FIXTURES = Path(__file__).parent / "fixtures" / "texlogs"
 # (severity, kind, file, line, a fragment of the message)
 Expected = tuple[str, str, str | None, int | None, str]
 
+# An undefined command's message names it: "Undefined control sequence \foo".
+UNDEFINED = "Undefined control sequence "
+
+# The five kinds of agent design §7.3 that the verifier and host repairs read,
+# in one document (see tests/compile/test_log_kinds.py for its source).
+KINDS_DOCUMENT: list[Expected] = [
+    ("warning", "undefined_citation", "main.tex", 3, "Citation `nokey' on page 1 undefined"),
+    ("warning", "undefined_reference", "main.tex", 3, "Reference `sec:none' on page 1 undefined"),
+    ("error", "undefined_control_sequence", "main.tex", 4, UNDEFINED + "\\foo"),
+    ("error", "undefined_environment", "main.tex", 5, "Environment nosuchenv undefined"),
+    ("error", "latex_error", "main.tex", 7, "\\begin{document} ended by \\end{nosuchenv}."),
+    ("error", "missing_file", "main.tex", 8, "File `nothere.tex' not found."),
+    ("error", "fatal", "main.tex", 8, "Emergency stop."),
+    ("error", "fatal", "main.tex", 8, "==> Fatal error occurred"),
+]
+
 LOG_CASES: dict[str, list[Expected]] = {
     # Clean: the paper template compiles with no diagnostics at all.
     "paper_ok": [],
@@ -38,7 +55,7 @@ LOG_CASES: dict[str, list[Expected]] = {
     # closes it. Context lines echo an unbalanced "(" that must not confuse
     # the file stack: the warning on line 9 still belongs to main.tex.
     "errors": [
-        ("error", "undefined_control_sequence", "sections/x.tex", 3, "\nl.3 Here is \\foo"),
+        ("error", "undefined_control_sequence", "sections/x.tex", 3, UNDEFINED + "\\foo"),
         ("error", "tex_error", "sections/x.tex", 4, "Missing $ inserted."),
         ("error", "tex_error", "main.tex", 6, "Missing $ inserted."),
         ("error", "package_error", "main.tex", 9, "Package keyval Error: nosuchkey undefined."),
@@ -57,7 +74,7 @@ LOG_CASES: dict[str, list[Expected]] = {
         ("error", "latex_error", "main.tex", 4, "Something's wrong--perhaps a missing \\item."),
         ("error", "latex_error", "main.tex", 4, "\\begin{itemize} on input line 3 ended by"),
         ("error", "latex_error", "main.tex", 5, "Lonely \\item--perhaps a missing list"),
-        ("info", "bad_box", "sections/boxes.tex", 1, "Overfull \\hbox (170.6865pt too wide)"),
+        ("info", "overfull_box", "sections/boxes.tex", 1, "Overfull \\hbox (170.6865pt too wide)"),
         ("warning", "undefined_reference", "sections/boxes.tex", 3, "Reference `box:after'"),
         ("error", "tex_error", None, None, "File ended while scanning use of \\textbf"),
         ("error", "fatal", None, None, "Emergency stop."),
@@ -91,8 +108,8 @@ LOG_CASES: dict[str, list[Expected]] = {
         ("warning", "undefined_reference", "main.tex", 6, "Reference `sec:none' on page 1"),
         ("warning", "undefined_citation", "main.tex", 6, "Citation `nokey' on page 1 undefined"),
         ("warning", "font_warning", "main.tex", 7, "undefined using `OT1/cmr/bx/n' instead"),
-        ("info", "bad_box", "sections/boxes.tex", 1, "Overfull \\hbox (170.99208pt too wide)"),
-        ("info", "bad_box", "sections/boxes.tex", 4, "Underfull \\hbox (badness 10000)"),
+        ("info", "overfull_box", "sections/boxes.tex", 1, "Overfull \\hbox (170.99208pt too wide)"),
+        ("info", "underfull_box", "sections/boxes.tex", 4, "Underfull \\hbox (badness 10000)"),
         ("warning", "undefined_reference", "sections/boxes.tex", 5, "`sec:alsomissing'"),
         ("warning", "font_warning", "main.tex", None, "Some font shapes were not available"),
         ("warning", "latex_warning", "main.tex", None, "There were undefined references."),
@@ -117,12 +134,18 @@ LOG_CASES: dict[str, list[Expected]] = {
     # main.tex inputs sections/a.tex, which inputs sections/b.tex, then
     # "sections/my file.tex", whose name TeX prints unquoted.
     "nested": [
-        ("error", "undefined_control_sequence", "sections/b.tex", 3, "l.3 Line three of b"),
+        ("error", "undefined_control_sequence", "sections/b.tex", 3, UNDEFINED + "\\undefinedinb"),
         ("warning", "undefined_citation", "sections/a.tex", 3, "Citation `ghost'"),
         ("warning", "undefined_reference", "main.tex", 6, "Reference `sec:nowhere'"),
-        ("error", "undefined_control_sequence", "sections/my file.tex", 2, "\\alsoundefined"),
-        ("info", "bad_box", "main.tex", 12, "Overfull \\hbox (116.92813pt too wide)"),
-        ("info", "bad_box", "main.tex", 12, "Underfull \\hbox (badness 10000)"),
+        (
+            "error",
+            "undefined_control_sequence",
+            "sections/my file.tex",
+            2,
+            UNDEFINED + "\\alsoundefined",
+        ),
+        ("info", "overfull_box", "main.tex", 12, "Overfull \\hbox (116.92813pt too wide)"),
+        ("info", "underfull_box", "main.tex", 12, "Underfull \\hbox (badness 10000)"),
         ("warning", "latex_warning", "main.tex", None, "There were undefined references."),
         ("warning", "latex_warning", "main.tex", None, "Label(s) may have changed."),
     ],
@@ -135,7 +158,7 @@ LOG_CASES: dict[str, list[Expected]] = {
     ],
     "lua_err": [
         ("warning", "font_warning", None, None, "Font shape `OT1/lmr/m/n' undefined"),
-        ("error", "undefined_control_sequence", "main.tex", 3, "l.3 Hello \\undefinedmacro"),
+        ("error", "undefined_control_sequence", "main.tex", 3, UNDEFINED + "\\undefinedmacro"),
         ("warning", "font_warning", "main.tex", None, "Some font shapes were not available"),
     ],
     # The hardening at work: each attempt fails inside TeX.
@@ -158,6 +181,10 @@ LOG_CASES: dict[str, list[Expected]] = {
     # \write18 only logs "runsystem(touch pwned)...disabled.", which is not
     # a diagnostic.
     "attack_write18": [],
+    # One document in TeX Live's and in MiKTeX's wording. MiKTeX prints
+    # bare file names ("main.tex:4:") and wraps long lines at 79 columns.
+    "texlive-kinds": KINDS_DOCUMENT,
+    "miktex-kinds": KINDS_DOCUMENT,
 }
 
 BLG_CASES: dict[str, list[Expected]] = {
@@ -224,7 +251,9 @@ SPEC_KINDS = {
     "font_warning",
     "package_warning",
     "latex_warning",
-    "bad_box",
+    "overfull_box",
+    "underfull_box",
+    "undefined_environment",
     "bibtex_error",
     "bibtex_warning",
 }
@@ -382,7 +411,7 @@ def test_bang_errors_take_file_from_the_stack_and_line_from_context() -> None:
         "sections/intro.tex",
         12,
     )
-    assert error.message == "Undefined control sequence.\nl.12 Some text \\foo"
+    assert error.message == "Undefined control sequence \\foo"
     assert (warning.file, warning.line) == ("main.tex", 20)
 
 

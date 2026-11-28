@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from prismtex.cancel import Cancelled
 from prismtex.compile import ExecutableNotFound, run_hardened
 
 
@@ -196,3 +197,33 @@ def test_returns_when_a_leftover_process_holds_the_pipe(tmp_path: Path) -> None:
     if sys.platform != "win32":
         # POSIX kills what is left of the process group.
         assert _wait_gone(leftover)
+
+
+WRITES_ITS_GRANDCHILD = """
+import pathlib, subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+pathlib.Path("grandchild.pid").write_text(str(child.pid))
+time.sleep(60)
+"""
+
+
+def test_should_stop_kills_the_whole_process_tree_and_raises_cancelled(tmp_path: Path) -> None:
+    pid_file = tmp_path / "grandchild.pid"
+    started = time.monotonic()
+    with pytest.raises(Cancelled):
+        run_hardened(
+            _py(WRITES_ITS_GRANDCHILD),
+            cwd=tmp_path,
+            env=_env(),
+            timeout_s=60,
+            should_stop=lambda: pid_file.is_file() and pid_file.read_text() != "",
+        )
+    assert time.monotonic() - started < 20
+    assert _wait_gone(int(pid_file.read_text())), "the grandchild survived the stop"
+
+
+def test_should_stop_that_never_fires_changes_nothing(tmp_path: Path) -> None:
+    outcome = run_hardened(
+        _py("print('done')"), cwd=tmp_path, env=_env(), timeout_s=30, should_stop=lambda: False
+    )
+    assert (outcome.exit_code, outcome.output.strip(), outcome.timed_out) == (0, "done", False)

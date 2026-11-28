@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from importlib import resources
@@ -40,6 +40,7 @@ from prismtex.errors import (
 from prismtex.layout import DataLayout
 from prismtex.workspace.paths import (
     INTERNAL_DIRS,
+    SOURCE_WRITE_EXTENSIONS,
     check_relative_path,
     check_root_file,
     is_internal,
@@ -52,16 +53,21 @@ from prismtex.workspace.text import (
     detect_eol,
     encode_text,
 )
-from prismtex.workspace.zipimport import ValidatedZip, detect_root_file
+from prismtex.workspace.zipimport import (
+    IMPORT_SOURCES,
+    ImportSource,
+    ValidatedZip,
+    detect_root_file,
+)
 
 Engine = Literal["pdflatex", "xelatex", "lualatex"]
 ProjectKind = Literal["blank", "paper", "resume", "import"]
 TemplateKind = Literal["blank", "paper", "resume"]
 ENGINES: frozenset[str] = frozenset(get_args(Engine))
 TEMPLATE_KINDS: frozenset[str] = frozenset(get_args(TemplateKind))
-SOURCE_EXTENSIONS = frozenset(
-    {".tex", ".ltx", ".bib", ".sty", ".cls", ".bst", ".bbx", ".cbx", ".cfg", ".def", ".txt"}
-)
+AgentProfile = Literal["agentic", "guided"]
+AGENT_PROFILES: frozenset[str] = frozenset(get_args(AgentProfile))
+SOURCE_EXTENSIONS = SOURCE_WRITE_EXTENSIONS
 MAX_TEXT_BYTES = 10 * 2**20
 MAX_NAME = 120
 SCHEMA = 1
@@ -117,9 +123,45 @@ class ProjectInfo:
 
 
 @dataclass(frozen=True)
+class AgentSettings:
+    """Per-project agent choices (agent design §10.3); None means the app default."""
+
+    model: str | None = None
+    profile: AgentProfile | None = None
+    auto_accept: bool = False
+
+    def __post_init__(self) -> None:
+        if self.model is not None and (not isinstance(self.model, str) or not self.model.strip()):
+            raise ValueError("model must be a non-empty string or None")
+        if self.profile is not None and self.profile not in AGENT_PROFILES:
+            raise ValueError("profile must be 'agentic', 'guided' or None")
+        if not isinstance(self.auto_accept, bool):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ValueError("auto_accept must be a boolean")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"model": self.model, "profile": self.profile, "auto_accept": self.auto_accept}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> AgentSettings:
+        """Build from stored or request JSON; raises ValueError on a bad value."""
+        model = data.get("model")
+        profile = data.get("profile")
+        auto_accept = data.get("auto_accept", False)
+        if model is not None and not isinstance(model, str):
+            raise ValueError("model must be a string or None")
+        if profile is not None and profile not in AGENT_PROFILES:
+            raise ValueError("profile must be 'agentic', 'guided' or None")
+        if not isinstance(auto_accept, bool):
+            raise ValueError("auto_accept must be a boolean")
+        checked: AgentProfile | None = profile  # pyright: ignore[reportAssignmentType]
+        return cls(model=model, profile=checked, auto_accept=auto_accept)
+
+
+@dataclass(frozen=True)
 class ProjectSettings:
     root_file: str | None
     engine: Engine
+    agent: AgentSettings = AgentSettings()
 
 
 @dataclass(frozen=True)
@@ -169,9 +211,23 @@ class ProjectStore:
             raise
         return info
 
-    def import_zip(self, stream: BinaryIO, *, name: str | None = None) -> ProjectInfo:
+    def import_zip(
+        self, stream: BinaryIO, *, name: str | None = None, source: ImportSource = "auto"
+    ) -> ProjectInfo:
+        """Create a project from a ZIP archive once every import check has passed.
+
+        `source` "prism" leaves out the `conversations/` folder of an OpenAI
+        Prism export, "overleaf" keeps every file the checks keep, and "auto"
+        picks "prism" when that folder is at the top after the top-folder strip.
+        Bytes are written as they are in the archive.
+        """
+        if source not in IMPORT_SOURCES:
+            raise InvalidRequest("The source must be auto, overleaf or prism.", field="source")
         with ValidatedZip.open(
-            stream, max_bytes=self.import_max_bytes, max_files=self.import_max_files
+            stream,
+            max_bytes=self.import_max_bytes,
+            max_files=self.import_max_files,
+            source=source,
         ) as archive:
             info = self._new_info("import", name, root_file=None)
             project_dir = self.layout.project_dir(info.id)
@@ -239,7 +295,29 @@ class ProjectStore:
 
     def settings(self, project_id: str) -> ProjectSettings:
         info = self.get(project_id)
-        return ProjectSettings(root_file=info.root_file, engine=info.engine)
+        agent = load_agent_settings(self.layout.project_json(project_id))
+        return ProjectSettings(root_file=info.root_file, engine=info.engine, agent=agent)
+
+    def update_settings(
+        self,
+        project_id: str,
+        *,
+        root_file: str | None | Unset = UNSET,
+        engine: Engine | None = None,
+        agent: AgentSettings | None = None,
+    ) -> ProjectSettings:
+        """Change settings in one read-modify-write of project.json.
+
+        Takes the same per-project lock as `update`, and every save keeps the
+        fields it does not change, so neither drops the other's values.
+        """
+        with self._lock(project_id):
+            if root_file is not UNSET or engine is not None:
+                self.update(project_id, root_file=root_file, engine=engine)
+            if agent is not None:
+                info = replace(self.get(project_id), updated_at=_now())
+                save_project_json(self.layout.project_json(project_id), info, agent=agent)
+            return self.settings(project_id)
 
     def delete(self, project_id: str) -> None:
         with self._lock(project_id):
@@ -293,13 +371,7 @@ class ProjectStore:
         has that version; otherwise VersionConflict carries the current one.
         """
         rel, target = self._locate(project_id, path)
-        normalized = text.replace("\r\n", "\n")
-        try:
-            size = len(normalized.encode("utf-8"))
-        except UnicodeEncodeError as exc:
-            raise InvalidRequest("The text is not valid Unicode.", field="content") from exc
-        if size > MAX_TEXT_BYTES:
-            raise PayloadTooLarge(MAX_TEXT_BYTES / 2**20)
+        normalized = _prepare_text(text)
         with self._lock(project_id):
             current = target.read_bytes() if target.is_file() else None
             if target.exists() and current is None:
@@ -313,6 +385,24 @@ class ProjectStore:
             _atomic_write(target, data, rel)
         return FileVersion(text=normalized, version=content_version(data), eol=eol)
 
+    def write_new(self, project_id: str, path: str, text: str) -> FileVersion:
+        """Create an LF text file; VersionConflict (with its version) if one exists.
+
+        Accepting a Proposal that creates a file uses this, so a file the user
+        made in the meantime is never overwritten.
+        """
+        rel, target = self._locate(project_id, path)
+        normalized = _prepare_text(text)
+        data = encode_text(normalized, "lf")
+        with self._lock(project_id):
+            if target.is_file():
+                raise VersionConflict(rel, content_version(target.read_bytes()))
+            if target.exists():
+                raise InvalidRequest(f"'{rel}' is a folder.", field="path")
+            _ensure_parent(self.layout.project_dir(project_id), rel, target)
+            _atomic_write(target, data, rel)
+        return FileVersion(text=normalized, version=content_version(data), eol="lf")
+
     def write_bytes(self, project_id: str, path: str, data: bytes) -> FileEntry:
         rel, target = self._locate(project_id, path)
         if len(data) > self.max_upload_bytes:
@@ -323,6 +413,27 @@ class ProjectStore:
             _ensure_parent(self.layout.project_dir(project_id), rel, target)
             _atomic_write(target, data, rel)
         return FileEntry(rel, len(data), file_kind(rel))
+
+    def replace_bytes(
+        self, project_id: str, path: str, data: bytes, *, expected_version: str | None
+    ) -> str:
+        """Write `data` as given if the file still has `expected_version`.
+
+        `expected_version` None means the file must not exist yet. Otherwise
+        VersionConflict carries the current version (None when the file is
+        gone). Returns the new content version. History restores files with
+        this, so a file gets back its exact bytes, line endings included.
+        """
+        rel, target = self._locate(project_id, path)
+        with self._lock(project_id):
+            if target.is_dir():
+                raise InvalidRequest(f"'{rel}' is a folder.", field="path")
+            current = content_version(target.read_bytes()) if target.is_file() else None
+            if current != expected_version:
+                raise VersionConflict(rel, current)
+            _ensure_parent(self.layout.project_dir(project_id), rel, target)
+            _atomic_write(target, data, rel)
+        return content_version(data)
 
     def upload(self, project_id: str, *, filename: str, data: bytes, folder: str = "") -> FileEntry:
         """Store an uploaded file at `<folder>/<basename of filename>`, overwriting."""
@@ -347,10 +458,23 @@ class ProjectStore:
             _ensure_parent(self.layout.project_dir(project_id), dst_rel, dst_path)
             _mutate_path(lambda: os.rename(src_path, dst_path), src_rel)
 
-    def delete_file(self, project_id: str, path: str) -> None:
-        """Delete a file, or a folder with everything in it."""
+    def delete_file(self, project_id: str, path: str, *, base_version: str | None = None) -> None:
+        """Delete a file, or a folder with everything in it.
+
+        With a `base_version`, only a regular file whose bytes still have that
+        version is deleted; otherwise VersionConflict carries the current
+        version (None when the file is gone).
+        """
         rel, target = self._locate_entry(project_id, path)
         with self._lock(project_id):
+            if base_version is not None:
+                if target.is_symlink() or target.is_dir():
+                    raise InvalidRequest(f"'{rel}' is not a regular file.", field="path")
+                current = content_version(target.read_bytes()) if target.is_file() else None
+                if current != base_version:
+                    raise VersionConflict(rel, current)
+                _mutate_path(target.unlink, rel)
+                return
             if target.is_symlink() or target.is_file():
                 _mutate_path(target.unlink, rel)
             elif target.is_dir():
@@ -439,10 +563,45 @@ class ProjectStore:
 # -- project.json -------------------------------------------------------------
 
 
-def save_project_json(path: Path, info: ProjectInfo) -> None:
+def save_project_json(path: Path, info: ProjectInfo, *, agent: AgentSettings | None = None) -> None:
+    """Write the project's info, keeping every other field already in the file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = {"schema": SCHEMA, **info.to_dict()}
+    body = _read_json_object(path)
+    body.update({"schema": SCHEMA, **info.to_dict()})
+    if agent is not None:
+        body["agent"] = agent.to_dict()
     _atomic_write(path, (json.dumps(body, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+
+
+def load_agent_settings(path: Path) -> AgentSettings:
+    """The stored agent settings; the defaults when missing or unreadable."""
+    raw = _read_json_object(path).get("agent")
+    if not isinstance(raw, dict):
+        return AgentSettings()
+    try:
+        return AgentSettings.from_dict(raw)  # pyright: ignore[reportUnknownArgumentType]
+    except ValueError:
+        return AgentSettings()
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}  # pyright: ignore[reportUnknownVariableType]
+
+
+def _prepare_text(text: str) -> str:
+    """LF text checked for valid Unicode and the size limit."""
+    normalized = text.replace("\r\n", "\n")
+    try:
+        size = len(normalized.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise InvalidRequest("The text is not valid Unicode.", field="content") from exc
+    if size > MAX_TEXT_BYTES:
+        raise PayloadTooLarge(MAX_TEXT_BYTES / 2**20)
+    return normalized
 
 
 def load_project_json(path: Path, project_id: str) -> ProjectInfo | None:

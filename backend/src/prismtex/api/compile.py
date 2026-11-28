@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlencode
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from prismtex.api.deps import CompilerDep, StoreDep
+from prismtex.api.deps import CompilerDep, StoreDep, TreeCompilerDep
+from prismtex.cancel import CancelToken
 from prismtex.compile import CompileResult, CompileStatus, Severity, pdf_file
+from prismtex.compile.tree import source_tree
 from prismtex.workspace import Engine, ProjectStore
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["compile"])
@@ -79,15 +82,20 @@ def _pdf_url(store: ProjectStore, project_id: str, result: CompileResult) -> str
 
 
 @router.post("/compile")
-def compile_project(
+async def compile_project(
     project_id: str,
-    compiler: CompilerDep,
+    tree_compiler: TreeCompilerDep,
     store: StoreDep,
     body: CompileBody | None = None,
 ) -> CompileOut:
-    # A plain `def` route: FastAPI runs the blocking compile in a worker thread.
+    # The user's compile is a tree with no overlay, so it shares the compile
+    # cache with the agent's Baseline and Proposal compiles (agent design
+    # §7.1). Reading the tree and compiling run in worker threads.
     options = body or CompileBody()
-    result = compiler.compile(project_id, root_file=options.root_file, engine=options.engine)
+    tree = await asyncio.to_thread(
+        source_tree, store, project_id, root_file=options.root_file, engine=options.engine
+    )
+    result = await tree_compiler.compile(tree, purpose="user", cancel=CancelToken())
     return CompileOut(
         status=result.status,
         ok=result.ok,

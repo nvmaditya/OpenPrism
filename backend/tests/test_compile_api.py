@@ -38,6 +38,10 @@ class FakeCompiler:
     calls: list[dict[str, Any]] = field(default_factory=list)
     write_pdf: bool = True
     error: Exception | None = None
+    toolchain: str = "fake 1.0"
+
+    def compile_dir(self, src_dir: Path, **kwargs: Any) -> CompileResult:
+        raise AssertionError("the Compile route compiles through compile(), not compile_dir()")
 
     def compile(
         self, project_id: str, *, root_file: str | None = None, engine: Engine | None = None
@@ -115,7 +119,8 @@ def test_compile_returns_the_result(api: TestClient, fake: FakeCompiler) -> None
         "log_id": "a" * 32,
         "pdf_url": f"/api/projects/{pid}/pdf?v={pdf.stat().st_mtime_ns}-{'a' * 32}",
     }
-    assert fake.calls == [{"project_id": pid, "root_file": None, "engine": None}]
+    # The route resolves the Root file and engine into the tree it compiles.
+    assert fake.calls == [{"project_id": pid, "root_file": "main.tex", "engine": "pdflatex"}]
 
 
 def test_pdf_url_is_unique_per_compile(store: ProjectStore) -> None:
@@ -162,7 +167,7 @@ def test_compile_overrides_are_passed_through_and_not_saved(
     assert body["pdf_url"].endswith("&root_file=other.tex")
     assert api.get(f"/api/projects/{pid}").json()["root_file"] == "main.tex"
     api.post(f"/api/projects/{pid}/compile", json={})
-    assert fake.calls[-1] == {"project_id": pid, "root_file": None, "engine": None}
+    assert fake.calls[-1] == {"project_id": pid, "root_file": "main.tex", "engine": "pdflatex"}
 
 
 def test_pdf_url_is_null_without_a_pdf(api: TestClient, fake: FakeCompiler) -> None:

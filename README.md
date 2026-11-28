@@ -9,7 +9,7 @@ A self-hosted LaTeX editor, being built around an AI agent that shows its work: 
 
 ## What works today
 
-- **Projects.** Create a blank project, an example paper or an example résumé; import a ZIP (with limits on size, file count and compression ratio, and symlinks and paths outside the project rejected); rename and delete.
+- **Projects.** Create a blank project, an example paper or an example résumé; import a ZIP (with limits on size, file count and compression ratio, and symlinks and paths outside the project rejected); rename and delete. An Overleaf download or an OpenAI Prism export imports directly: a shared top folder is stripped, the root file is detected, and a Prism export's `conversations/` folder is left out.
 - **Files.** A file tree with upload into any folder, rename and delete. Saves carry the version the editor loaded, so a file changed on disk since you opened it is never silently overwritten.
 - **Editor.** A plain text editor for now. CodeMirror arrives in Phase 2.
 - **Outline.** The headings of every `.tex` file, each a link to its line.
@@ -77,7 +77,7 @@ flowchart LR
   A -.Phase 1.-> M[Writing agent<br/>your choice of model]
 ```
 
-The backend is the `prismtex` Python package in `backend/src/prismtex`, and the UI is a Next.js app in `frontend/`. Project folders hold only your files: settings and compile logs live under `<data dir>/state/`, and build output under `<data dir>/build/`. The design documents in [docs/design](docs/design) and the decision records in [docs/adr](docs/adr) explain the rest.
+The backend is the `prismtex` Python package in `backend/src/prismtex`, and the UI is a Next.js app in `frontend/`. Project folders hold only your files: settings and compile logs live under `<data dir>/state/`, build output under `<data dir>/build/`, and History checkpoints under `<data dir>/history/`. The design documents in [docs/design](docs/design) and the decision records in [docs/adr](docs/adr) explain the rest.
 
 ## Roadmap
 
@@ -95,4 +95,4 @@ Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md). Pl
 
 [Apache License 2.0](LICENSE). See also [NOTICE](NOTICE).
 
-PrismTeX is an independent project. It is not affiliated with or endorsed by OpenAI.
+PrismTeX is an independent project. It is not affiliated with or endorsed by OpenAI or Overleaf.

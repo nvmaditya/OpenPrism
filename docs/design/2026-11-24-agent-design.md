@@ -596,14 +596,18 @@ def check_source_path(path: str, *, for_write: bool) -> str: ...
     # a subclass of Phase 0's PathPolicyError
 
 SourceTree(project_id: str, root_file: str, engine: Engine, overlay: Mapping[str, str | None],
-           eols: Mapping[str, Eol], inputs: Mapping[str, str], digest: str)
+           eols: Mapping[str, Eol], inputs: Mapping[str, str], digest: str,
+           assets: Mapping[str, tuple[int, int]])
     # prismtex.compile.tree; overlay: path -> LF text (None: deleted) over the Project folder;
     # inputs: each Source path's content version (of its effective bytes) at capture;
+    # assets: each Asset's (size, mtime_ns), so a scratch compile knows what to link;
     # digest: sha256 over the Root file, the engine, the inputs and each Asset's size and mtime;
     # the compile cache key is sha256(toolchain, digest)
 class TreeCompiler(Protocol):            # ScratchTreeCompiler (TeX) and FakeTreeCompiler
     async def compile(self, tree: SourceTree, *, purpose: Literal["user", "baseline", "proposal"],
-                      cancel: CancelToken, timeout_s: float = 120.0) -> CompileResult: ...
+                      cancel: CancelToken, timeout_s: float = 120.0,
+                      turn_id: str | None = None) -> CompileResult: ...   # turn_id names the scratch dir
+    def peek(self, digest: str) -> CompileResult | None: ...             # a cache hit, without compiling
 
 class History(Protocol):                 # prismtex.history: GitShadowHistory and NullHistory
     async def checkpoint(self, project_id: str, *,
@@ -1133,11 +1137,11 @@ Before writing, `History.checkpoint(reason="save", message="Changes before accep
 
 ### 7.2 Scratch compile
 
-`ScratchTreeCompiler` materializes each tree in `build/<project_id>/scratch/<turn_id>/<digest>/`. Overlaid Source files are written with their own line ending; other Source files are copied; Assets are hard-linked from a per-Project asset cache, `build/<project_id>/assets/`, never from the Project folder, so a TeX `\openout` in the scratch directory cannot write through a link into a user's file. A cache entry whose size or modification time no longer matches its source is copied again. Phase 0's `Compiler.compile_dir` then runs with its hardened argv, the scratch directory as both source and output, and no per-Project lock, so a Baseline compile neither waits for nor blocks the user's own Compile. Paths in Diagnostics are mapped back to Project-relative paths. The Turn's scratch directory is deleted at finalization, retried on Windows, where TeX can hold file handles briefly; leftovers are removed at the next startup.
+`ScratchTreeCompiler` materializes each tree in `build/<project_id>/scratch/<turn_id>/<digest>/`. Overlaid Source files are written with their own line ending; other Source files are copied; Assets are hard-linked from a per-Project asset cache, `build/<project_id>/assets/`, never from the Project folder, so a TeX `\openout` in the scratch directory cannot write through a link into a user's file. A cache entry whose size or modification time no longer matches its source is copied again. Phase 0's `Compiler.compile_dir` then runs with its hardened argv and `.fls` audit, the tree in `<digest>/src/` and the output in `<digest>/out/` (it refuses an output folder inside the source folder), and no per-Project lock, so a Baseline compile neither waits for nor blocks the user's own Compile. Paths in Diagnostics are mapped back to Project-relative paths. The Turn's scratch directory is deleted at finalization, retried on Windows, where TeX can hold file handles briefly; leftovers are removed at the next startup.
 
 ### 7.3 Diagnostic fingerprinting and matching
 
-- **Diagnostic kinds.** The log parser emits exactly these kinds: `tex_error`, `undefined_control_sequence` (message `Undefined control sequence \cmd`, the command taken from the `l.N` context line), `undefined_environment` (`Environment X undefined`), `fatal` (emergency stop, fatal error, job aborted), `latex_warning`, `package_warning`, `undefined_reference`, `undefined_citation` and `overfull_box`. The verifier adds `no_pdf`.
+- **Diagnostic kinds.** The log parser emits these kinds: `tex_error`, `undefined_control_sequence` (message `Undefined control sequence \cmd`, the command at the end of TeX's top context line, which is the `l.N` line for an error in the source text), `undefined_environment` (`Environment X undefined`), `fatal` (emergency stop, fatal error, job aborted), `latex_warning`, `package_warning`, `undefined_reference`, `undefined_citation` and `overfull_box`, plus the finer kinds Phase 0 already emitted and `docs/compile.md` lists: `missing_file`, `latex_error` and `package_error` (errors that would otherwise be `tex_error`), `multiply_defined_label` and `font_warning` (warnings that would otherwise be `latex_warning`), and `underfull_box`. The BibTeX log adds `bibtex_error` and `bibtex_warning`, and the compiler `access_denied`, `compile_failed`, `timeout`, `tex_missing` and `engine_disabled`. The verifier adds `no_pdf`.
 - **Problems** are error-severity Diagnostics, warnings of kind `undefined_citation` and `undefined_reference` (an invented `\cite` key must not pass), and "no PDF produced" (`no_pdf`) when the Baseline produced one. Other warnings are counted, never blocking.
 - **Excerpt:** the verifier reads the source line a Diagnostic points at from the tree that was compiled, and collapses its whitespace.
 - **Fingerprint:** sha256 over (`file`, `kind`, the message with digit runs masked as `#`, the normalized excerpt). It contains no line number, so an edit that moves a pre-existing error does not make it new.

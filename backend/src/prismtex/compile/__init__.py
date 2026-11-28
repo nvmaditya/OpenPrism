@@ -3,7 +3,9 @@
 from prismtex.compile.argv import build_latexmk_argv, build_tex_env, is_shell_safe_name
 from prismtex.compile.compiler import (
     MAX_LOG_TEXT_BYTES,
+    NO_TOOLCHAIN,
     TEX_MISSING_MESSAGE,
+    CompileBackend,
     Compiler,
     CompileResult,
     CompileService,
@@ -26,7 +28,9 @@ __all__ = [
     "KEEP_LOGS",
     "MAX_DIAGNOSTICS",
     "MAX_LOG_TEXT_BYTES",
+    "NO_TOOLCHAIN",
     "TEX_MISSING_MESSAGE",
+    "CompileBackend",
     "CompileLogStore",
     "CompileResult",
     "CompileService",

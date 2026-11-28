@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -56,6 +56,26 @@ class PathPolicyError(AppError):
     def __init__(self, path: str, reason: str, message: str) -> None:
         super().__init__(message, path=path, reason=reason)
         self.reason = reason
+
+
+class PathDenied(PathPolicyError):
+    """A path the agent may not read or write (agent design §12).
+
+    `code` is "path_denied" for a path outside the policy and "write_denied"
+    for a path the agent may read but never write (a script, an image).
+    """
+
+    def __init__(
+        self,
+        path: str,
+        reason: str,
+        message: str,
+        *,
+        code: Literal["path_denied", "write_denied"] = "path_denied",
+    ) -> None:
+        super().__init__(path, reason, message)
+        self.code = code
+        self.path = path
 
 
 class VersionConflict(AppError):
@@ -168,6 +188,14 @@ class LogNotFound(AppError):
 
     def __init__(self, log_id: str) -> None:
         super().__init__("This compile log does not exist.", log_id=log_id)
+
+
+class CheckpointNotFound(AppError):
+    status = 404
+    code = "checkpoint_not_found"
+
+    def __init__(self, checkpoint_id: str) -> None:
+        super().__init__("This checkpoint does not exist.", checkpoint_id=checkpoint_id)
 
 
 class PdfNotFound(AppError):

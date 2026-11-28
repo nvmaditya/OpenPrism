@@ -281,6 +281,32 @@ def test_unconditional_write_and_matching_version(store: ProjectStore, pid: str)
     assert store.read(pid, "main.tex") == second
 
 
+def test_replace_bytes_writes_exact_bytes_only_at_the_expected_version(
+    store: ProjectStore, pid: str
+) -> None:
+    root = store.layout.project_dir(pid)
+    original = (root / "main.tex").read_bytes()
+    data = b"a\r\nb\n\xe9"  # mixed line endings, not UTF-8
+    with pytest.raises(VersionConflict) as exists:
+        store.replace_bytes(pid, "main.tex", data, expected_version=None)
+    assert exists.value.current_version == content_version(original)
+    with pytest.raises(VersionConflict):
+        store.replace_bytes(pid, "main.tex", data, expected_version=content_version(b"other"))
+    assert (root / "main.tex").read_bytes() == original
+
+    version = store.replace_bytes(pid, "main.tex", data, expected_version=content_version(original))
+    assert (root / "main.tex").read_bytes() == data and version == content_version(data)
+    created = store.replace_bytes(pid, "new/fig.png", b"\x89PNG", expected_version=None)
+    assert created == content_version((root / "new" / "fig.png").read_bytes())
+    with pytest.raises(VersionConflict) as gone:
+        store.replace_bytes(pid, "missing.tex", b"x", expected_version=content_version(b"x"))
+    assert gone.value.current_version is None and not (root / "missing.tex").exists()
+    with pytest.raises(InvalidRequest):
+        store.replace_bytes(pid, "new", b"x", expected_version=None)
+    with pytest.raises(PathPolicyError):
+        store.replace_bytes(pid, ".git/config", b"x", expected_version=None)
+
+
 def test_write_limits_and_shapes(store: ProjectStore, pid: str) -> None:
     with pytest.raises(PayloadTooLarge) as info:
         store.write(pid, "big.tex", "x" * (10 * 2**20 + 1), None)

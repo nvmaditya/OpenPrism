@@ -1,9 +1,10 @@
 """ZIP import: every check runs before anything is unpacked.
 
 An imported archive is untrusted. `ValidatedZip.open` rejects zip-slip
-names, symlinks, encrypted entries, archives over the size or file-count
-limits and entries that look like ZIP bombs, then strips a shared top
-folder. Only then may the caller create a project and `extract_to` it.
+names and symlinks, strips a shared top folder, leaves out the
+`conversations/` folder of an OpenAI Prism export, then rejects encrypted
+entries, archives over the size or file-count limits and entries that look
+like ZIP bombs. Only then may the caller create a project and `extract_to` it.
 """
 
 from __future__ import annotations
@@ -18,13 +19,20 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import BinaryIO, Self
+from typing import BinaryIO, Literal, Self, get_args
 
 from prismtex.errors import ImportRejected, PathPolicyError
 from prismtex.workspace.paths import check_relative_path, is_internal
 from prismtex.workspace.text import strip_comment
 
-__all__ = ["ValidatedZip", "detect_root_file"]
+__all__ = ["IMPORT_SOURCES", "ImportSource", "ValidatedZip", "detect_root_file"]
+
+# Where an archive comes from. "auto" means "prism" when the archive has a
+# `conversations/` folder at the top after the top-folder strip, else "overleaf".
+ImportSource = Literal["auto", "overleaf", "prism"]
+IMPORT_SOURCES: frozenset[str] = frozenset(get_args(ImportSource))
+# An OpenAI Prism export keeps its chat history here; it is not project content.
+_CONVERSATIONS = "conversations/"
 
 MAX_RATIO = 100
 RATIO_MIN_BYTES = 2**20
@@ -58,7 +66,14 @@ class ValidatedZip:
         self._entries = entries
 
     @classmethod
-    def open(cls, stream: BinaryIO, *, max_bytes: int, max_files: int) -> Self:
+    def open(
+        cls,
+        stream: BinaryIO,
+        *,
+        max_bytes: int,
+        max_files: int,
+        source: ImportSource = "auto",
+    ) -> Self:
         # Count entries from the archive tail first. `zipfile.ZipFile` reads the
         # whole central directory into memory, so a hostile archive that claims
         # millions of entries would exhaust RAM before any limit applied.
@@ -68,7 +83,9 @@ class ValidatedZip:
         except (zipfile.BadZipFile, OSError, EOFError) as exc:
             raise ImportRejected("bad_zip", "The file is not a valid ZIP archive.") from exc
         try:
-            entries = _plan(archive.infolist(), max_bytes=max_bytes, max_files=max_files)
+            entries = _plan(
+                archive.infolist(), max_bytes=max_bytes, max_files=max_files, source=source
+            )
         except BaseException:
             archive.close()
             raise
@@ -170,9 +187,24 @@ def _zip64_count(stream: BinaryIO, tail: bytes, eocd_idx: int, *, fallback: int)
     return struct.unpack("<Q", header[32:40])[0]
 
 
-def _plan(infos: list[zipfile.ZipInfo], *, max_bytes: int, max_files: int) -> list[_Entry]:
-    kept: list[_Entry] = []
-    total = 0
+def _plan(
+    infos: list[zipfile.ZipInfo], *, max_bytes: int, max_files: int, source: ImportSource
+) -> list[_Entry]:
+    kept = _strip_top_folder(_members(infos, max_files=max_files))
+    # Dropped before the limits are checked, so the limits count only kept entries.
+    if _resolve_source(source, kept) == "prism":
+        kept = [entry for entry in kept if not entry.path.startswith(_CONVERSATIONS)]
+    _check_limits(kept, max_bytes=max_bytes, max_files=max_files)
+    # Old OpenPrism exports carried app metadata in `.prism/`; it is not user content.
+    kept = [entry for entry in kept if not is_internal(entry.path)]
+    if not kept:
+        raise ImportRejected("empty", "The archive contains no files.")
+    return _dedupe(kept)
+
+
+def _members(infos: list[zipfile.ZipInfo], *, max_files: int) -> list[_Entry]:
+    """The file entries with their checked paths; links and unsafe names are rejected."""
+    members: list[_Entry] = []
     seen = 0
     for info in infos:
         name = info.filename
@@ -191,6 +223,22 @@ def _plan(infos: list[zipfile.ZipInfo], *, max_bytes: int, max_files: int) -> li
             ) from exc
         if _skipped(info, path):
             continue
+        members.append(_Entry(info, path))
+    return members
+
+
+def _resolve_source(source: ImportSource, entries: list[_Entry]) -> Literal["overleaf", "prism"]:
+    if source != "auto":
+        return source
+    has_conversations = any(entry.path.startswith(_CONVERSATIONS) for entry in entries)
+    return "prism" if has_conversations else "overleaf"
+
+
+def _check_limits(entries: list[_Entry], *, max_bytes: int, max_files: int) -> None:
+    total = 0
+    for count, entry in enumerate(entries, start=1):
+        info = entry.info
+        name = info.filename
         if info.flag_bits & 0x1:
             raise ImportRejected("bad_zip", "Encrypted archives cannot be imported.")
         if (
@@ -205,16 +253,8 @@ def _plan(infos: list[zipfile.ZipInfo], *, max_bytes: int, max_files: int) -> li
             raise ImportRejected(
                 "too_large", f"The archive unpacks to more than {_mb(max_bytes)} MB."
             )
-        kept.append(_Entry(info, path))
-        if len(kept) > max_files:
+        if count > max_files:
             raise ImportRejected("too_many_files", f"The archive has more than {max_files} files.")
-
-    kept = _strip_top_folder(kept)
-    # Old OpenPrism exports carried app metadata in `.prism/`; it is not user content.
-    kept = [entry for entry in kept if not is_internal(entry.path)]
-    if not kept:
-        raise ImportRejected("empty", "The archive contains no files.")
-    return _dedupe(kept)
 
 
 def _skipped(info: zipfile.ZipInfo, path: str) -> bool:

@@ -1,7 +1,8 @@
 """Run one external command with no shell, closed stdin, a timeout and an output cap.
 
-On timeout the whole process tree is killed, not only the direct child:
-latexmk starts the engine and BibTeX as children of its own.
+On timeout, or when the caller asks it to stop, the whole process tree is
+killed, not only the direct child: latexmk starts the engine and BibTeX as
+children of its own.
 """
 
 from __future__ import annotations
@@ -13,10 +14,12 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
+
+from prismtex.cancel import Cancelled
 
 __all__ = ["ExecutableNotFound", "RunOutcome", "run_hardened"]
 
@@ -24,6 +27,8 @@ _CHUNK = 64 * 1024
 # How long to wait for the output pipe to close once the command has exited
 # or been killed. A leftover process that still holds it open is killed.
 _DRAIN_GRACE_S = 2.0
+# How often `should_stop` is polled while the command runs.
+_STOP_POLL_S = 0.1
 
 
 class ExecutableNotFound(Exception):
@@ -110,6 +115,25 @@ def _kill_tree(proc: subprocess.Popen[bytes]) -> None:
             pass
 
 
+def _wait(
+    proc: subprocess.Popen[bytes], timeout_s: float, should_stop: Callable[[], bool] | None
+) -> int:
+    """The exit code; TimeoutExpired after `timeout_s`, Cancelled once `should_stop()`."""
+    if should_stop is None:
+        return proc.wait(timeout=timeout_s)
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if should_stop():
+            raise Cancelled()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout_s)
+        try:
+            return proc.wait(timeout=min(_STOP_POLL_S, remaining))
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def run_hardened(
     argv: Sequence[str],
     *,
@@ -117,11 +141,14 @@ def run_hardened(
     env: dict[str, str],
     timeout_s: float,
     max_output_bytes: int = 4 * 2**20,
+    should_stop: Callable[[], bool] | None = None,
 ) -> RunOutcome:
     """Run `argv` to completion or until `timeout_s` passes.
 
     The executable is looked up on `env["PATH"]`, not the server's PATH, and
     started by absolute path. Raises ExecutableNotFound if it is missing.
+    `should_stop`, when given, is polled while the command runs; once it
+    returns True the process tree is killed and Cancelled is raised.
     """
     if not argv:
         raise ValueError("argv is empty")
@@ -158,7 +185,7 @@ def run_hardened(
     exit_code: int | None = None
     timed_out = False
     try:
-        exit_code = proc.wait(timeout=timeout_s)
+        exit_code = _wait(proc, timeout_s, should_stop)
     except subprocess.TimeoutExpired:
         timed_out = True
         _kill_tree(proc)

@@ -4,7 +4,7 @@ Guide for coding agents and human contributors working in this repository. [CONT
 
 ## What this is
 
-PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores projects and compiles them with latexmk, and a Next.js UI. The AI writing agent is being rebuilt and returns in Phase 1 (v0.1.0); there is no agent code in the tree today.
+PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores projects and compiles them with latexmk, and a Next.js UI. The AI writing agent is being rebuilt for Phase 1 (v0.1.0). Its building blocks are in `agent/`, but nothing serves it yet.
 
 ## Repository map
 
@@ -16,9 +16,24 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
   - `errors.py`: the `AppError` hierarchy and the error envelope.
   - `security.py`: Host, access-token and Origin middleware.
   - `migrate.py`: one-time migration of legacy `.prism/` folders.
+  - `cancel.py`: `CancelToken`, the cancellation flag a Turn polls and awaits.
   - `workspace/`: path policy, text versions and line endings, `ProjectStore`, ZIP import, project templates.
-  - `outline/`: the outline parser.
-  - `compile/`: latexmk argv and environment, the hardened runner, log parsing, `Compiler`, compile logs.
+  - `outline/`: the Outline (headings with their spans, the `\input` graph, labels, citations and packages) and the per-file parser behind `GET /outline`.
+  - `history/`: History, the Checkpoints of each project in a bare git repository at `history/<id>.git` whose work tree is the project folder. `GitShadowHistory` runs the `git` CLI with no user config or hooks and stores bytes exactly as on disk; `NullHistory` stands in when git is missing. `create_app` puts the one in use on `app.state.history`; a ZIP import takes an `import` Checkpoint.
+  - `compile/`: latexmk argv and environment, the hardened runner, log parsing, `Compiler`, compile logs, source trees with scratch compiles and the shared compile cache (`tree.py`), and a TeX-free tree compiler for tests (`fake.py`).
+  - `agent/`: the writing agent (agent design). So far, these modules:
+    - `types.py`, `errors.py`, `events.py` and `trace.py`: value types, errors, the versioned event union and the per-Turn Trace.
+    - `providers/`: the model port, the catalog, tool-argument parsing, the Anthropic adapter (`anthropic.py`, which needs a cost ledger path to be built) and the fakes tests use.
+    - `budget.py`: the Turn limits, the cost guard and the fsynced cost ledger shared by every process that makes paid calls.
+    - `staging.py`: the Turn's base (every Source file once, a dirty buffer in place of its file) and the overlay its edits land in; nothing reaches the disk.
+    - `proposals.py`: Hunks, rebase and line maps, and `ProposalDesk`, which keeps each project's open proposal under `state/<id>/proposals/` and is the only writer of agent text (accept hunk by hunk, with a `save` and an `accept` Checkpoint).
+    - `verify.py`: the differential verifier. `Verifier` compiles the Turn's Baseline and Proposal trees through the tree compiler, matches their problems by fingerprint and line map (`diff_diagnostics`), makes the host repairs (a missing package, document wrappers in an included file, bibliography wiring) as host edits in staging, and returns the `Verification` a proposal carries.
+    - `threads.py`: `ThreadStore`, one append-only, fsynced JSONL file per thread under `state/<id>/threads/` (turn records, transcript segments with provider messages kept verbatim, resolutions), and the memory renderings `<memory>`, `<earlier_turns>` and `<since_last_turn>`.
+    - `context.py`: token budgets and estimation, `PromptSet` (the system prompts in `profiles/prompts/*.md`, shipped as package data, and their prompt version), and `ContextAssembler`, which packs a step's message within the budget, refuses a call that cannot fit before it is sent, and decides when a transcript segment rolls over.
+    - `tools.py`: the 11 agentic tool specs and `ToolBox`, which runs a model's tool call against the Turn's staging only: schema checks, the JSON escape guard on LaTeX arguments, refusal of writes on question Turns, the repeat guard, and results cut at 4,000 tokens.
+    - `steps.py`: `StepRunner`, one model call of a Turn (fit the context, reserve the cost, stream, settle, emit the message and usage events, record the call), shared by both Profiles.
+    - `turn.py`: for now only the records a Profile works with (`TurnScope`, `RepairFeedback`, `ProfileResult`).
+    - `profiles/`: Profile choice and intent routing (`choose_profile`, `classify_intent`, `make_profile`), the agentic Profile's tool loop (`agentic.py`), and the prompts. The guided Profile is not built yet.
   - `api/`: FastAPI routers.
 - `backend/tests/`: pytest. Tests marked `tex` need a real TeX installation.
 - `frontend/`: the Next.js UI. `lib/api.ts` is the only API client.
