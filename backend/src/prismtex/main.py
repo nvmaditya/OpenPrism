@@ -11,6 +11,7 @@ from prismtex import __version__
 from prismtex.api import compile as compile_routes
 from prismtex.api import files, health, outline, projects
 from prismtex.compile import Compiler, CompileService
+from prismtex.compile.tree import ScratchTreeCompiler
 from prismtex.errors import PayloadTooLarge, error_response, install_error_handlers
 from prismtex.layout import DataLayout
 from prismtex.migrate import migrate_legacy_projects
@@ -65,9 +66,15 @@ def create_app(
 
     app.state.settings = settings
     app.state.store = store
-    app.state.compiler = (
+    service: CompileService = (
         compiler if compiler is not None else Compiler(store, timeout_s=settings.compile_timeout_s)
     )
+    app.state.compiler = service
+    # Every compile, the user's included, goes through the tree compiler and
+    # its cache; leftover Turn scratch folders are removed at startup.
+    tree_compiler = ScratchTreeCompiler(service, layout)
+    tree_compiler.sweep()
+    app.state.tree_compiler = tree_compiler
 
     for router in (
         health.router,

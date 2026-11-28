@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from prismtex.compile import CompileService
+from prismtex.compile.tree import TreeCompiler
 from prismtex.settings import Settings
 from prismtex.workspace import ProjectStore
 
@@ -23,6 +24,11 @@ def get_compiler(request: Request) -> CompileService:
     return request.app.state.compiler
 
 
+def get_tree_compiler(request: Request) -> TreeCompiler:
+    return request.app.state.tree_compiler
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 StoreDep = Annotated[ProjectStore, Depends(get_store)]
 CompilerDep = Annotated[CompileService, Depends(get_compiler)]
+TreeCompilerDep = Annotated[TreeCompiler, Depends(get_tree_compiler)]

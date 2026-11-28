@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Literal, Protocol, get_args
 
 from prismtex.compile.argv import (
+    LATEXMK,
     build_latexmk_argv,
     build_tex_env,
     is_shell_safe_name,
@@ -45,7 +48,9 @@ from prismtex.workspace.paths import INTERNAL_DIRS
 
 __all__ = [
     "MAX_LOG_TEXT_BYTES",
+    "NO_TOOLCHAIN",
     "TEX_MISSING_MESSAGE",
+    "CompileBackend",
     "CompileResult",
     "CompileService",
     "CompileStatus",
@@ -90,6 +95,10 @@ _TOOL_STEMS = frozenset(
 _UP_TO_DATE = re.compile(r"^Latexmk: All targets .* are up-to-date", re.MULTILINE)
 _PREVIOUS_ERROR = "gave an error in previous invocation of latexmk"
 
+# `Compiler.toolchain` when latexmk is not on PATH.
+NO_TOOLCHAIN = "none"
+_VERSION_TIMEOUT_S = 30.0
+
 
 @dataclass(frozen=True)
 class CompileResult:
@@ -108,12 +117,32 @@ class CompileResult:
         return self.status == "ok"
 
 
-class CompileService(Protocol):
-    """What the HTTP layer needs; tests inject a fake with these methods."""
+class CompileBackend(Protocol):
+    """What a tree compiler needs from the Compiler (`prismtex.compile.tree`)."""
+
+    @property
+    def toolchain(self) -> str: ...
 
     def compile(
         self, project_id: str, *, root_file: str | None = None, engine: Engine | None = None
     ) -> CompileResult: ...
+
+    def compile_dir(
+        self,
+        src_dir: Path,
+        *,
+        project_id: str,
+        root_file: str,
+        engine: Engine,
+        out_dir: Path,
+        log_path: Path | None = None,
+        timeout_s: float | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> CompileResult: ...
+
+
+class CompileService(CompileBackend, Protocol):
+    """What the HTTP layer needs; tests inject a fake with these methods."""
 
     def logs(self, project_id: str) -> list[LogSummary]: ...
 
@@ -137,6 +166,37 @@ class Compiler:
         self._logs = CompileLogStore(store.layout)
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
+        self._toolchain: str | None = None
+        self._toolchain_lock = threading.Lock()
+
+    @property
+    def toolchain(self) -> str:
+        """The TeX toolchain compiles run with, as one line; NO_TOOLCHAIN without latexmk.
+
+        The first line of `latexmk -v` and of each installed engine's
+        `--version`, joined by " | ". Detected on first use and kept, except
+        that NO_TOOLCHAIN is detected again, so installing TeX needs no
+        restart. A compile cache keys its results on it, so a toolchain
+        change never reuses a result.
+        """
+        with self._toolchain_lock:
+            if self._toolchain is None or self._toolchain == NO_TOOLCHAIN:
+                self._toolchain = self._detect_toolchain()
+            return self._toolchain
+
+    def _detect_toolchain(self) -> str:
+        cwd = self.store.layout.build_root
+        env = build_tex_env(os.environ if self._base_env is None else self._base_env, cwd)
+        path = env.get("PATH")
+        latexmk = shutil.which(LATEXMK, path=path) if path else None
+        if latexmk is None:
+            return NO_TOOLCHAIN
+        lines = [_version_line([latexmk, "-norc", "-v"], cwd, env)]
+        for engine in get_args(Engine):
+            executable = shutil.which(engine, path=path)
+            if executable is not None:
+                lines.append(_version_line([executable, "--version"], cwd, env))
+        return " | ".join(lines)
 
     # -- project compiles ---------------------------------------------------
 
@@ -211,12 +271,15 @@ class Compiler:
         out_dir: Path,
         log_path: Path | None = None,
         timeout_s: float | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> CompileResult:
         """Compile `root_file` in `src_dir` into `out_dir`; takes no lock.
 
-        `project_id` names the project the folder belongs to (Phase 1 scratch
+        `project_id` names the project the folder belongs to (scratch
         compiles pass it); it is not looked up. `log_path`, when given, also
-        receives the log text.
+        receives the log text. `should_stop` is polled while latexmk runs;
+        once it returns True the process tree is killed and Cancelled is
+        raised, and `out_dir` may hold partial output.
         """
         src = Path(src_dir).resolve()
         root = _check_root(src, root_file)
@@ -243,14 +306,17 @@ class Compiler:
         env = build_tex_env(os.environ if self._base_env is None else self._base_env, out)
         argv = build_latexmk_argv(root, engine, out, tools=resolve_tools(env.get("PATH")))
         try:
-            run = run_hardened(argv, cwd=src, env=env, timeout_s=limit)
+            run = run_hardened(argv, cwd=src, env=env, timeout_s=limit, should_stop=should_stop)
             reading = _read_outputs(run, outputs, src, parse=not run.timed_out)
             remaining = limit - run.duration_ms / 1000
             if _stale_rule_failure(run, outputs, reading) and remaining > 0:
                 # latexmk 4.83 reports a rule's old failure once more after the
                 # rule stops being used (the bibliography was removed, say).
                 # The next run has nothing left to do and settles it.
-                run = _joined(run, run_hardened(argv, cwd=src, env=env, timeout_s=remaining))
+                again = run_hardened(
+                    argv, cwd=src, env=env, timeout_s=remaining, should_stop=should_stop
+                )
+                run = _joined(run, again)
                 reading = _read_outputs(run, outputs, src, parse=not run.timed_out)
         except ExecutableNotFound:
             return self._finish_unavailable(TEX_MISSING_MESSAGE, root, engine, log_path)
@@ -423,6 +489,29 @@ def pdf_file(store: ProjectStore, project_id: str, root_file: str | None = None)
     if not path.is_file():
         raise PdfNotFound()
     return path
+
+
+def _version_line(argv: list[str], cwd: Path, env: Mapping[str, str]) -> str:
+    """The first non-empty line `argv` prints on stdout, or a placeholder naming the tool."""
+    name = PurePosixPath(argv[0].replace("\\", "/")).name
+    try:
+        cwd.mkdir(parents=True, exist_ok=True)
+        done = subprocess.run(
+            argv,
+            cwd=cwd,
+            env=dict(env),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=_VERSION_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return f"{name} (version unknown)"
+    for line in done.stdout.decode("utf-8", errors="replace").splitlines():
+        if line.strip():
+            return line.strip()
+    return f"{name} (version unknown)"
 
 
 def _check_root(src_dir: Path, root_file: str) -> str:

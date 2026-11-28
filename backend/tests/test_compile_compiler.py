@@ -362,7 +362,7 @@ def test_ok_when_the_pdf_is_written_and_no_errors(
     assert result.ok
     assert result.pdf_path == store.layout.out(info.id) / "main.pdf"
     assert result.exit_code == 0
-    assert {d.kind for d in result.diagnostics} >= {"undefined_citation", "bad_box"}
+    assert {d.kind for d in result.diagnostics} >= {"undefined_citation", "overfull_box"}
     assert result.log_text.startswith("latexmk says hi\n===== main.log =====\n")
     assert result.log_id is not None
     [meta] = compiler.logs(info.id)

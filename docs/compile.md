@@ -8,7 +8,7 @@ The code is in `backend/src/prismtex/compile/`.
 
 ## What happens on a compile
 
-1. `POST /api/projects/{id}/compile` calls `Compiler.compile`. The body may name a `root_file` and an `engine` for this run only; otherwise the project's settings are used.
+1. `POST /api/projects/{id}/compile` reads the project as a source tree with no overlay and hands it to the tree compiler (see "Scratch compiles and the compile cache"). The body may name a `root_file` and an `engine` for this run only; otherwise the project's settings are used. When an earlier Compile of the same content still has its PDF in the build folder, its result is returned as is (same `log_id`, no new log); otherwise the tree compiler calls `Compiler.compile`, and the steps below run.
 2. The root file is checked: it must be an existing `.tex` file inside the project that passes the file API's path policy, must not start with `-`, and must not contain whitespace other than spaces or any of `` % # $ & ~ ^ { } \ ` ! ``. The engine must be `pdflatex`, `xelatex` or `lualatex`; `lualatex` is stored but refused at compile time (see "LuaLaTeX is disabled").
 3. The project root is checked for a file that Windows could run as a tool (an executable extension, or an extensionless file named after a TeX program). If one is present, the compile is refused with `409 unsafe_project_file` before latexmk starts.
 4. One compile per project runs at a time. A second request for the same project waits for the first. `Compiler.is_compiling(project_id)` reports (without blocking) whether a compile holds the lock; the project-delete route uses it to refuse deleting a project mid-compile.
@@ -91,7 +91,8 @@ Each diagnostic has a `file` (a path relative to the project, or `null`), a `lin
 
 | Kind | Severity | Source |
 |---|---|---|
-| `undefined_control_sequence` | error | `Undefined control sequence.` |
+| `undefined_control_sequence` | error | `Undefined control sequence.`; the message is `Undefined control sequence \foo`, naming the command |
+| `undefined_environment` | error | ``LaTeX Error: Environment x undefined.``; the message is `Environment x undefined` |
 | `missing_file` | error | ``LaTeX Error: File `x' not found.``, a package's ``File `x' not found`` error (graphics), or TeX's ``I can't find file `x'`` |
 | `latex_error` | error | other `LaTeX Error:` messages |
 | `package_error` | error | `Package <name> Error:` or `Class <name> Error:` |
@@ -103,7 +104,8 @@ Each diagnostic has a `file` (a path relative to the project, or `null`), a `lin
 | `font_warning` | warning | `LaTeX Font Warning:` |
 | `package_warning` | warning | other `Package <name> Warning:` or `Class <name> Warning:` |
 | `latex_warning` | warning | other `LaTeX Warning:` |
-| `bad_box` | info | `Overfull` or `Underfull` `\hbox` or `\vbox`, with the line from `at line(s) N` |
+| `overfull_box` | info | `Overfull \hbox` or `\vbox`, with the line from `at line(s) N` |
+| `underfull_box` | info | `Underfull \hbox` or `\vbox`, with the line from `at line(s) N` |
 | `bibtex_error` | error | the `.blg`: `I couldn't open ... file`, `I found no ...`, and other lines with a `---` location; Biber's `ERROR` lines |
 | `bibtex_warning` | warning | the `.blg`: `Warning--...`; Biber's `WARN` lines |
 | `access_denied` | warning *or* error | **warning**, from latexmk's output: kpathsea's `Not reading from <path> (openin_any = p)` / `Not writing to <path> (openout_any = p)` — a read or write that was *refused*. TeX Live 2024+ appends `; extended check` or `; no extended check` (and TL2024.0 a double space); all wordings are recognised. **error**, from the compiler: the `.fls` audit found the engine *did* read a file outside the project, so the PDF, the log and the other diagnostics were withheld. The program name is shown by base name only, never the server path. |
@@ -115,12 +117,28 @@ Each diagnostic has a `file` (a path relative to the project, or `null`), a `lin
 How the parser finds file and line:
 
 - An error's file and line come from its `file:line:` prefix. A `! ...` error takes its line from the `l.<n>` context line TeX prints after it, and its file from the file stack. A "not found" error with no context of its own takes the line of the `Emergency stop` that follows it in the same file.
-- An error's message is the text after `file:line: `, followed on a new line by the `l.<n> ...` context line when there is one. Package errors continued on `(<package>)` lines are joined into one message, and so are warnings.
+- An error's message is the text after `file:line: `, followed on a new line by the `l.<n> ...` context line when there is one. Two kinds are worded for the agent's verifier and host repairs instead (agent design §7.3): an undefined command's message is `Undefined control sequence \foo`, the command taken from the end of TeX's top context line (the `l.<n>` line for an error in the source text, the macro's expansion for an error inside a macro; `Undefined control sequence.` when there is no context), and an undefined environment's is `Environment x undefined`. Package errors continued on `(<package>)` lines are joined into one message, and so are warnings.
 - A warning's line comes from `on input line L`; its file from the file stack. The parser follows the `(` and `)` TeX prints as it opens and closes files. A `(` that is not followed by a file name pushes a placeholder, so the stack stays balanced. Text TeX echoes from the source (error context, help text, runaway arguments, box contents) is skipped, because it can hold unbalanced parentheses.
 - TeX Live prints `./sections/a.tex`; this becomes `sections/a.tex`. Absolute paths inside the project folder are made relative, and bare relative names (as BibTeX and, reportedly, MiKTeX print them) are kept. Paths outside the project, and build files such as `.aux` and `.bbl`, map to `null`. A diagnostic without a file has no line either.
 - Duplicates are dropped, and at most 200 diagnostics are kept, errors first, in log order.
 
-The parser's tests run over real logs in `backend/tests/fixtures/texlogs/`, made by the compile command above from small documents written for each case.
+The parser's tests run over real logs in `backend/tests/fixtures/texlogs/`, made by the compile command above from small documents written for each case. `miktex-kinds.log.txt` is a real MiKTeX log; `texlive-kinds.log.txt` is the same document in TeX Live 2023's wording, put together from the TeX Live logs of the other cases.
+
+The agent's verifier (agent design §7.3) relies on `undefined_citation`, `undefined_reference`, `fatal`, `undefined_control_sequence` and `undefined_environment`, and counts every `error` as a problem.
+
+## Scratch compiles and the compile cache
+
+`prismtex.compile.tree` compiles *source trees*. A `SourceTree` is a project as one compile reads it: the project folder with an overlay of text on top (an agent Turn's staged edits, an unsaved editor buffer), the line ending each overlaid file is written with, the content version of every source file's effective bytes, each asset's size and modification time, and a digest of all of that plus the root file and the engine. `source_tree(projects, project_id, overlay=..., eols=...)` builds one; an overlaid path keeps the line ending of the file on disk unless told otherwise, and goes through the path policy.
+
+`ScratchTreeCompiler` keeps an in-process LRU cache of 64 results under sha256(`Compiler.toolchain`, digest). `Compiler.toolchain` is the first line of `latexmk -v` and of each engine's `--version`, detected once (`none` without latexmk, which is detected again on the next use), so a TeX upgrade never reuses a result. `ok` and `failed` results are cached; `timeout` and `unavailable` are not.
+
+- **Baseline and Proposal compiles** (an agent Turn) are written to `build/<id>/scratch/<turn_id>/<digest>/src/`: overlaid files with their own line endings, other source files copied from the project folder, and assets hard-linked (or copied, where a link fails) from a per-project asset cache in `build/<id>/assets/`, never from the project folder, so nothing TeX does in the scratch folder can reach a user's file. An asset cache entry whose size or modification time no longer matches the project's file is copied again, into a new file, so earlier scratch folders keep their bytes. The tree then compiles through `Compiler.compile_dir` into `.../<digest>/out/`, with the log also written to `.../<digest>/compile.log`. That is the same hardened argv, environment, source-tree mirror, Biber guard and `.fls` audit as a user compile, with the scratch folder in the place of the project folder; it takes no per-project lock, so a Turn never waits for, or blocks, the user's own Compile. Diagnostic paths are mapped back to paths in the tree; any other path becomes `null`. Two compiles of the same digest at once run once. A result whose scratch folder did not match the digest (a project file changed between reading the tree and writing it out) is returned but not cached.
+- **User compiles** (the Compile button: no overlay) go through `Compiler.compile`, under its lock, into `build/<id>/out/`, with the log stored as before. They reuse only an earlier user compile's result, and only while the PDF it reported is still the one in `build/<id>/out/` (same size and modification time). A Baseline or Proposal result is never reused for the user: its PDF lived in a scratch folder that is deleted when its Turn ends.
+- **Reuse across purposes.** A Baseline or Proposal compile may reuse any cached result, the user's included, so a Turn that starts right after a Compile of the same content gets its Baseline for free.
+- **Cancelling.** A compile whose Turn is cancelled kills the TeX process tree (the runner polls for it) and raises `Cancelled`; nothing is cached.
+- **Cleaning up.** `cleanup(project_id, turn_id)` deletes a Turn's scratch folder, retrying on Windows, where TeX can hold a file open for a moment after it exits. At startup, `create_app` calls `sweep()`, which deletes every leftover scratch folder.
+
+`prismtex.compile.fake` has `FakeTreeCompiler`, which applies regex `FakeRule`s to a tree's effective source texts instead of running TeX and caches the same way, and `make_result`, which builds a `CompileResult` for tests.
 
 ## The `.fls` audit (pdflatex and xelatex)
 

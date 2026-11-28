@@ -132,6 +132,13 @@ _MULTIPLY_DEFINED = re.compile(r"Warning: Label [`'][^']*' multiply defined")
 _PACKAGE_ERROR = re.compile(r"^(?:Package|Class) (?P<name>[^\s:]+) Error: ")
 _FILE_NOT_FOUND = re.compile(r"File [`'][^']*' not found|^I can't find file")
 _FATAL = re.compile(r"^(?:Emergency stop|==> Fatal error occurred)")
+_UNDEFINED_ENVIRONMENT = re.compile(r"^LaTeX Error: Environment (?P<name>\S+) undefined\.?$")
+# The undefined command ends TeX's top context line ("The control sequence at
+# the end of the top line of your error message was never \def'ed"). That is
+# the `l.<n>` line for an error in the source text, and the expansion of the
+# macro the error is in otherwise. Under expl3, `_` and `:` are letters too,
+# so a name runs to the next space or backslash.
+_TOP_LINE_COMMAND = re.compile(r"(\\(?:[^\s\\]+|.))\s*$")
 
 # How far to look for an error's `l.<n>` context line, and the most lines of
 # help text TeX prints after it.
@@ -142,6 +149,8 @@ _HELP_WINDOW = 20
 def _error_kind(message: str) -> str:
     if message.startswith("Undefined control sequence"):
         return "undefined_control_sequence"
+    if _UNDEFINED_ENVIRONMENT.match(message):
+        return "undefined_environment"
     if _FATAL.match(message):
         return "fatal"
     if _FILE_NOT_FOUND.search(message) and (
@@ -294,13 +303,23 @@ class _TexLog:
                 break
             cursor += 1
 
-        if context is not None:
-            if line is None:
-                match = _CONTEXT.match(lines[context])
-                assert match is not None
-                line = int(match["line"])
+        kind = _error_kind(message)
+        if context is not None and line is None:
+            match = _CONTEXT.match(lines[context])
+            assert match is not None
+            line = int(match["line"])
+        if kind == "undefined_control_sequence":
+            # "Undefined control sequence \foo": the verifier and the host
+            # repairs read the command from the message (agent design §7.3).
+            top = lines[after] if after < len(lines) else ""
+            command = _TOP_LINE_COMMAND.search(top) if self._header(top) is None else None
+            if command is not None:
+                message = f"Undefined control sequence {command[1]}"
+        elif environment := _UNDEFINED_ENVIRONMENT.match(message):
+            message = f"Environment {environment['name']} undefined"
+        elif context is not None:
             message += "\n" + lines[context].rstrip()
-        self._add(file, line, "error", _error_kind(message), message)
+        self._add(file, line, "error", kind, message)
 
         if context is not None:
             return self._skip_to_blank(context + 2, context + 2 + _HELP_WINDOW)
@@ -346,7 +365,8 @@ class _TexLog:
     def _bad_box(self, index: int) -> int:
         text = self.lines[index].strip()
         number = _BOX_LINE.search(text)
-        self._add(self._current(), int(number[1]) if number else None, "info", "bad_box", text)
+        kind = "overfull_box" if text.startswith("Overfull") else "underfull_box"
+        self._add(self._current(), int(number[1]) if number else None, "info", kind, text)
         # The box contents follow, up to a blank line.
         return self._skip_to_blank(index + 1, index + 1 + _HELP_WINDOW)
 

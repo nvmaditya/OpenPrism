@@ -20,7 +20,7 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
   - `workspace/`: path policy, text versions and line endings, `ProjectStore`, ZIP import, project templates.
   - `outline/`: the Outline (headings with their spans, the `\input` graph, labels, citations and packages) and the per-file parser behind `GET /outline`.
   - `history/`: History, the Checkpoints of each project in a bare git repository at `history/<id>.git` whose work tree is the project folder. `GitShadowHistory` runs the `git` CLI with no user config or hooks and stores bytes exactly as on disk; `NullHistory` stands in when git is missing.
-  - `compile/`: latexmk argv and environment, the hardened runner, log parsing, `Compiler`, compile logs.
+  - `compile/`: latexmk argv and environment, the hardened runner, log parsing, `Compiler`, compile logs, source trees with scratch compiles and the shared compile cache (`tree.py`), and a TeX-free tree compiler for tests (`fake.py`).
   - `agent/`: the writing agent (agent design). So far, these modules:
     - `types.py`, `errors.py`, `events.py` and `trace.py`: value types, errors, the versioned event union and the per-Turn Trace.
     - `providers/`: the model port, the catalog, tool-argument parsing and the fakes tests use.
