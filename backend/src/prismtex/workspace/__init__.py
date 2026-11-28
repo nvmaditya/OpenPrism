@@ -1,9 +1,10 @@
 """Projects and their files, behind the path policy (revamp §6.2)."""
 
-from prismtex.errors import PathPolicyError
+from prismtex.errors import PathDenied, PathPolicyError, VersionConflict
 from prismtex.workspace.paths import (
     check_relative_path,
     check_root_file,
+    check_source_path,
     is_internal,
     resolve_in,
 )
@@ -11,6 +12,8 @@ from prismtex.workspace.store import (
     ENGINES,
     SOURCE_EXTENSIONS,
     UNSET,
+    AgentProfile,
+    AgentSettings,
     Engine,
     FileEntry,
     ProjectInfo,
@@ -36,10 +39,13 @@ __all__ = [
     "ENGINES",
     "SOURCE_EXTENSIONS",
     "UNSET",
+    "AgentProfile",
+    "AgentSettings",
     "Engine",
     "Eol",
     "FileEntry",
     "FileVersion",
+    "PathDenied",
     "PathPolicyError",
     "ProjectInfo",
     "ProjectKind",
@@ -48,8 +54,10 @@ __all__ = [
     "TemplateKind",
     "Unset",
     "ValidatedZip",
+    "VersionConflict",
     "check_relative_path",
     "check_root_file",
+    "check_source_path",
     "content_version",
     "decode_text",
     "detect_eol",

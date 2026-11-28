@@ -21,6 +21,12 @@ DOMAIN_ERRORS: list[tuple[AppError, int, str, dict[str, object]]] = [
         {"path": "../x", "reason": "parent"},
     ),
     (
+        errors.PathDenied("run.py", "not_source", "no", code="write_denied"),
+        400,
+        "write_denied",
+        {"path": "run.py", "reason": "not_source"},
+    ),
+    (
         errors.VersionConflict("a.tex", "v2"),
         409,
         "version_conflict",

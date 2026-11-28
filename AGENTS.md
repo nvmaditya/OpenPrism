@@ -16,6 +16,7 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
   - `errors.py`: the `AppError` hierarchy and the error envelope.
   - `security.py`: Host, access-token and Origin middleware.
   - `migrate.py`: one-time migration of legacy `.prism/` folders.
+  - `cancel.py`: `CancelToken`, the cancellation flag a Turn polls and awaits.
   - `workspace/`: path policy, text versions and line endings, `ProjectStore`, ZIP import, project templates.
   - `outline/`: the outline parser.
   - `compile/`: latexmk argv and environment, the hardened runner, log parsing, `Compiler`, compile logs.

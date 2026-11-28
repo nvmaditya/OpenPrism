@@ -10,12 +10,16 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from prismtex.errors import PathPolicyError, RootFileInvalid
+from prismtex.errors import PathDenied, PathPolicyError, RootFileInvalid
 
 __all__ = [
+    "AGENT_DENIED_DIRS",
     "INTERNAL_DIRS",
+    "SOURCE_WRITE_EXTENSIONS",
+    "PathDenied",
     "PathPolicyError",
     "check_relative_path",
+    "check_source_path",
     "check_root_file",
     "is_internal",
     "resolve_in",
@@ -91,6 +95,46 @@ def check_relative_path(path: str) -> str:
     normalized = "/".join(segments)
     if len(normalized) > MAX_PATH:
         raise _deny(path, "too_long")
+    return normalized
+
+
+# The agent may read any file inside a project, but it writes only text the
+# compile reads as source. A latexmkrc, a Lua or Perl script and the like
+# would run code, so they are never written by the agent (agent design §12).
+SOURCE_WRITE_EXTENSIONS = frozenset(
+    {".tex", ".ltx", ".bib", ".sty", ".cls", ".bst", ".bbx", ".cbx", ".cfg", ".def", ".txt"}
+)
+# State folders the agent never touches, case-insensitive, at the project root.
+AGENT_DENIED_DIRS = frozenset({*INTERNAL_DIRS, ".prismtex"})
+
+
+def check_source_path(path: str, *, for_write: bool) -> str:
+    """Normalize a path the agent names, or raise PathDenied.
+
+    Built on `check_relative_path` (no absolute, drive, UNC or `..` paths, no
+    device names, reserved characters, streams or trailing dots), it also
+    denies segments starting with `-` (they read as options on a command
+    line) and the state folders. With `for_write`, only the source extensions
+    in SOURCE_WRITE_EXTENSIONS may be written; anything else is "write_denied".
+    """
+    try:
+        normalized = check_relative_path(path)
+    except PathPolicyError as exc:
+        raise PathDenied(path, exc.reason, exc.message) from exc
+    segments = normalized.split("/")
+    if any(seg.startswith("-") for seg in segments):
+        raise PathDenied(path, "leading_dash", "File and folder names may not start with '-'.")
+    if segments[0].lower() in AGENT_DENIED_DIRS:
+        raise PathDenied(path, "internal", _MESSAGES["internal"])
+    if for_write:
+        suffix = Path(segments[-1]).suffix.lower()
+        if suffix not in SOURCE_WRITE_EXTENSIONS:
+            raise PathDenied(
+                path,
+                "not_source",
+                "The agent can only write LaTeX source files (.tex, .bib, .sty, .cls and similar).",
+                code="write_denied",
+            )
     return normalized
 
 
