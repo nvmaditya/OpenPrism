@@ -1,127 +1,105 @@
 #!/usr/bin/env bash
-# Start OpenPrism backend (FastAPI) + frontend (Next.js) for local dev.
+# Run PrismTeX for local development: the API on 127.0.0.1:8000 and the UI on
+# 127.0.0.1:3000. The UI proxies /api to the API, so open only the UI.
+#
+# Needs: Python 3.12+ with the backend installed (pip install -e "backend[dev]"),
+# Node 22, and TeX Live or MiKTeX with latexmk for compiling.
+# Read from the environment (not .env): PRISMTEX_PORT (API port, default 8000),
+# UI_PORT (default 3000) and PRISMTEX_DATA_DIR (default ./data). Both servers
+# bind 127.0.0.1; the API reads its other settings from .env as usual.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-BACKEND_HOST="${PRISM_HOST:-127.0.0.1}"
-BACKEND_PORT="${PRISM_PORT:-8000}"
-FRONTEND_PORT="${PRISM_FRONTEND_PORT:-3000}"
-API_URL="${NEXT_PUBLIC_API_URL:-http://${BACKEND_HOST}:${BACKEND_PORT}}"
+API_PORT="${PRISMTEX_PORT:-8000}"
+UI_PORT="${UI_PORT:-3000}"
+API_URL="http://127.0.0.1:${API_PORT}"
+export PRISMTEX_DATA_DIR="${PRISMTEX_DATA_DIR:-$ROOT/data}"
+LOG_DIR="$ROOT/logs"
 
-BACKEND_PID=""
-FRONTEND_PID=""
+API_PID=""
+UI_PID=""
 
-log() { printf '[prism] %s\n' "$*"; }
-
+log() { printf '[prismtex] %s\n' "$*"; }
 die() {
-  log "ERROR: $*"
+  log "error: $*"
   exit 1
 }
 
 cleanup() {
   local code=$?
-  log "shutting down..."
-  if [[ -n "${FRONTEND_PID}" ]] && kill -0 "${FRONTEND_PID}" 2>/dev/null; then
-    kill "${FRONTEND_PID}" 2>/dev/null || true
-    wait "${FRONTEND_PID}" 2>/dev/null || true
-  fi
-  if [[ -n "${BACKEND_PID}" ]] && kill -0 "${BACKEND_PID}" 2>/dev/null; then
-    kill "${BACKEND_PID}" 2>/dev/null || true
-    wait "${BACKEND_PID}" 2>/dev/null || true
-  fi
-  exit "${code}"
+  trap - INT TERM EXIT
+  for pid in "$UI_PID" "$API_PID"; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
+  exit "$code"
 }
 trap cleanup INT TERM EXIT
 
-resolve_python() {
-  if [[ -x "${ROOT}/.venv/Scripts/python.exe" ]]; then
-    echo "${ROOT}/.venv/Scripts/python.exe"
-  elif [[ -x "${ROOT}/.venv/bin/python" ]]; then
-    echo "${ROOT}/.venv/bin/python"
-  elif command -v python3 >/dev/null 2>&1; then
-    command -v python3
-  elif command -v python >/dev/null 2>&1; then
-    command -v python
-  else
-    die "no Python found (expected .venv or python3 on PATH)"
-  fi
+find_python() {
+  local candidate
+  for candidate in "$ROOT/.venv/bin/python" "$ROOT/.venv/Scripts/python.exe"; do
+    [[ -x "$candidate" ]] && { echo "$candidate"; return; }
+  done
+  for candidate in python3 python; do
+    command -v "$candidate" >/dev/null 2>&1 && { command -v "$candidate"; return; }
+  done
+  die "no Python found; install Python 3.12+"
 }
 
-wait_http() {
-  local url="$1"
-  local name="$2"
-  local attempts="${3:-60}"
-  local i
-  for ((i = 1; i <= attempts; i++)); do
-    if command -v curl >/dev/null 2>&1; then
-      if curl -sf --max-time 2 "${url}" >/dev/null 2>&1; then
-        log "${name} ready: ${url}"
-        return 0
-      fi
-    else
-      # Fallback: Python one-liner
-      if "${PY}" -c "import urllib.request; urllib.request.urlopen('${url}', timeout=2)" 2>/dev/null; then
-        log "${name} ready: ${url}"
-        return 0
-      fi
+wait_for() {
+  local url="$1" name="$2" seconds="$3" pid="$4" i
+  for ((i = 0; i < seconds; i++)); do
+    if "$PY" - "$url" >/dev/null 2>&1 <<'PROBE'
+import sys
+import urllib.request
+
+# No proxy: a configured HTTP proxy must not intercept 127.0.0.1.
+urllib.request.build_opener(urllib.request.ProxyHandler({})).open(sys.argv[1], timeout=2)
+PROBE
+    then
+      log "$name ready at $url"
+      return 0
     fi
+    kill -0 "$pid" 2>/dev/null || die "$name exited early; see $LOG_DIR"
     sleep 1
   done
-  die "${name} did not become ready at ${url} within ${attempts}s"
+  die "$name did not answer at $url within ${seconds}s; see $LOG_DIR"
 }
 
-PY="$(resolve_python)"
-log "python: ${PY}"
-log "root:   ${ROOT}"
+PY="$(find_python)"
+"$PY" -c "import prismtex" 2>/dev/null ||
+  die "the backend is not installed for $PY; run: $PY -m pip install -e \"backend[dev]\""
+command -v npm >/dev/null 2>&1 || die "npm not found; install Node 22"
+command -v latexmk >/dev/null 2>&1 ||
+  log "warning: latexmk not found; compiles will report that TeX is not installed"
 
-# Ensure frontend deps if missing
-if [[ ! -d "${ROOT}/frontend/node_modules" ]]; then
-  log "installing frontend deps (npm install)..."
-  (cd "${ROOT}/frontend" && npm install)
+if [[ ! -d "$ROOT/frontend/node_modules" ]]; then
+  log "installing UI dependencies (npm ci)"
+  (cd "$ROOT/frontend" && npm ci)
 fi
 
-mkdir -p "${ROOT}/data/projects" "${ROOT}/data/previews" "${ROOT}/data/skill-home" "${ROOT}/logs"
+mkdir -p "$LOG_DIR"
 
-log "starting backend on http://${BACKEND_HOST}:${BACKEND_PORT} ..."
+log "starting the API on $API_URL (data: $PRISMTEX_DATA_DIR)"
+"$PY" -m prismtex serve --host 127.0.0.1 --port "$API_PORT" >"$LOG_DIR/backend.log" 2>&1 &
+API_PID=$!
+wait_for "$API_URL/api/health" "API" 30 "$API_PID"
+
+log "starting the UI on http://127.0.0.1:$UI_PORT"
 (
-  cd "${ROOT}"
-  exec "${PY}" -m uvicorn app.main:app \
-    --app-dir backend \
-    --host "${BACKEND_HOST}" \
-    --port "${BACKEND_PORT}"
-) >"${ROOT}/logs/backend.log" 2>&1 &
-BACKEND_PID=$!
+  cd "$ROOT/frontend"
+  PRISMTEX_API_URL="$API_URL" exec npm run dev -- --port "$UI_PORT"
+) >"$LOG_DIR/frontend.log" 2>&1 &
+UI_PID=$!
+wait_for "http://127.0.0.1:$UI_PORT/" "UI" 90 "$UI_PID"
 
-wait_http "http://${BACKEND_HOST}:${BACKEND_PORT}/health" "backend" 45
-
-log "starting frontend on http://127.0.0.1:${FRONTEND_PORT} ..."
-(
-  cd "${ROOT}/frontend"
-  export NEXT_PUBLIC_API_URL="${API_URL}"
-  exec npm run dev -- --port "${FRONTEND_PORT}" --hostname 127.0.0.1
-) >"${ROOT}/logs/frontend.log" 2>&1 &
-FRONTEND_PID=$!
-
-wait_http "http://127.0.0.1:${FRONTEND_PORT}/" "frontend" 90
-
-log ""
-log "OpenPrism is running"
-log "  API:  http://${BACKEND_HOST}:${BACKEND_PORT}/health"
-log "  UI:   http://127.0.0.1:${FRONTEND_PORT}/"
-log "  logs: ${ROOT}/logs/backend.log"
-log "        ${ROOT}/logs/frontend.log"
-log "Press Ctrl+C to stop."
-log ""
-
-# Keep foreground until interrupted
-while true; do
-  if ! kill -0 "${BACKEND_PID}" 2>/dev/null; then
-    die "backend exited early; see logs/backend.log"
-  fi
-  if ! kill -0 "${FRONTEND_PID}" 2>/dev/null; then
-    die "frontend exited early; see logs/frontend.log"
-  fi
+log "PrismTeX is running at http://127.0.0.1:$UI_PORT/ (logs in $LOG_DIR). Ctrl+C stops it."
+while kill -0 "$API_PID" 2>/dev/null && kill -0 "$UI_PID" 2>/dev/null; do
   sleep 2
 done
+die "a server stopped; see $LOG_DIR"

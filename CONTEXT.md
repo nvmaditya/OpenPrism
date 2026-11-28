@@ -1,6 +1,6 @@
-# OpenPrism
+# PrismTeX
 
-A self-hosted LaTeX workspace with an AI writing agent whose changes are reviewable, compile-checked and reversible. ("OpenPrism" is the working name; see the revamp design for the rename decision.)
+A self-hosted LaTeX workspace with an AI writing agent whose changes are reviewable, compile-checked and reversible. (Called OpenPrism until 2026-11-25.)
 
 ## Language
 

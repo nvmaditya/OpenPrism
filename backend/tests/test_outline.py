@@ -1,93 +1,74 @@
-"""Phase 9: LaTeX outline titles + 1-based source lines."""
-
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
 from fastapi.testclient import TestClient
 
-from app.main import create_app
-from app.settings import Settings
-
-FIXTURE = """\\documentclass{article}
-\\begin{document}
-\\section{Intro}
-Hello
-\\subsection{Details}
-% \\section{Commented Out}
-\\section*{Appendix}
-\\end{document}
-"""
+from prismtex.outline import outline_project, parse_tex_outline
+from prismtex.workspace import ProjectStore
 
 
-@pytest.fixture
-def projects_root(tmp_path: Path) -> Path:
-    root = tmp_path / "projects"
-    root.mkdir()
-    return root
-
-
-@pytest.fixture
-def client(projects_root: Path) -> TestClient:
-    return TestClient(create_app(Settings(prism_projects_root=projects_root)))
-
-
-def test_parse_tex_outline_titles_and_one_based_lines():
-    from app.outline.parse_tex import parse_tex_outline
-
-    items = parse_tex_outline(FIXTURE)
-    titles = [(i["title"], i["line"], i["level"]) for i in items]
-    assert ("Intro", 3, 1) in titles
-    assert ("Details", 5, 2) in titles
-    assert ("Appendix", 7, 1) in titles
-    assert not any(i["title"] == "Commented Out" for i in items)
-
-
-def test_project_outline_api_reads_real_files(client: TestClient, projects_root: Path):
-    pid = client.post("/api/projects", json={"kind": "blank"}).json()["id"]
-    tex = (
-        "\\documentclass{article}\n"
-        "\\begin{document}\n"
-        "\\section{First Heading}\n"
-        "body\n"
-        "\\subsection{Second Heading}\n"
-        "\\end{document}\n"
+def test_parse_headings_levels_and_lines() -> None:
+    text = "\n".join(
+        [
+            "\\chapter{Intro}",
+            "\\section{Background}",
+            "% \\section{Commented out}",
+            "text \\subsection*{Starred} more",
+            "\\subsubsection[short]{Long title}",
+            "\\paragraph{Para}",
+            "50\\% done \\section{After escaped percent}",
+            "\\section{A} \\section{B}",
+            "\\section{Nested {braces}}",
+        ]
     )
-    put = client.put(
-        f"/api/projects/{pid}/files/main.tex",
-        json={"content": tex},
-    )
-    assert put.status_code == 200, put.text
-    on_disk = (projects_root / pid / "main.tex").read_text(encoding="utf-8")
-    assert "First Heading" in on_disk
-
-    resp = client.get(f"/api/projects/{pid}/outline")
-    assert resp.status_code == 200, resp.text
-    items = resp.json()["outline"]
-    by_title = {i["title"]: i for i in items}
-    assert by_title["First Heading"]["line"] == 3
-    assert by_title["First Heading"]["path"] == "main.tex"
-    assert by_title["Second Heading"]["line"] == 5
-    assert by_title["Second Heading"]["level"] == 2
+    assert parse_tex_outline(text) == [
+        {"title": "Intro", "line": 1, "level": 0, "macro": "chapter"},
+        {"title": "Background", "line": 2, "level": 1, "macro": "section"},
+        {"title": "Starred", "line": 4, "level": 2, "macro": "subsection*"},
+        {"title": "Long title", "line": 5, "level": 3, "macro": "subsubsection"},
+        {"title": "Para", "line": 6, "level": 4, "macro": "paragraph"},
+        {"title": "After escaped percent", "line": 7, "level": 1, "macro": "section"},
+        {"title": "A", "line": 8, "level": 1, "macro": "section"},
+        {"title": "B", "line": 8, "level": 1, "macro": "section"},
+    ]
 
 
-def test_example_outline_includes_resume_headings(client: TestClient):
-    pid = client.post("/api/projects", json={"kind": "example"}).json()["id"]
-    resp = client.get(f"/api/projects/{pid}/outline")
-    assert resp.status_code == 200, resp.text
-    items = resp.json()["outline"]
-    titles = {i["title"] for i in items}
-    assert "Professional Summary" in titles
-    assert "Experience" in titles
-    assert "Education" in titles
-    assert "Skills" in titles
-    summary = next(i for i in items if i["title"] == "Professional Summary")
-    assert summary["path"] == "sections/summary.tex"
-    assert summary["line"] == 1
-    assert summary["line"] >= 1
+def test_parse_handles_crlf() -> None:
+    assert parse_tex_outline("a\r\n\\section{X}\r\n")[0]["line"] == 2
 
 
-def test_outline_missing_project_404(client: TestClient):
-    r = client.get(f"/api/projects/{'0' * 32}/outline")
-    assert r.status_code == 404
+def test_outline_project_root_file_first(store: ProjectStore) -> None:
+    pid = store.create(kind="paper").id
+    store.write(pid, "appendix.tex", "\\section{Appendix}\n", None)
+    store.write_bytes(pid, "binary.tex", b"\xff\xfe\\section{Hidden}")
+    items = outline_project(store, pid)
+    assert [(i["path"], i["title"]) for i in items] == [
+        ("appendix.tex", "Appendix"),
+        ("sections/conclusion.tex", "Conclusion"),
+        ("sections/introduction.tex", "Introduction"),
+        ("sections/method.tex", "Method"),
+        ("sections/results.tex", "Results"),
+    ]
+    store.write(pid, "main.tex", "\\section{Root heading}\n", None)
+    store.write(pid, "other.tex", "\\section{Other root}\n", None)
+    store.update(pid, root_file="other.tex")
+    assert outline_project(store, pid)[0] == {
+        "title": "Other root",
+        "line": 1,
+        "level": 1,
+        "macro": "section",
+        "path": "other.tex",
+    }
+
+
+def test_outline_api(client: TestClient) -> None:
+    pid = client.post("/api/projects", json={"kind": "resume"}).json()["id"]
+    response = client.get(f"/api/projects/{pid}/outline")
+    assert response.status_code == 200
+    outline = response.json()["outline"]
+    assert [(i["path"], i["title"], i["macro"]) for i in outline] == [
+        ("sections/education.tex", "Education", "section*"),
+        ("sections/experience.tex", "Experience", "section*"),
+        ("sections/skills.tex", "Skills", "section*"),
+        ("sections/summary.tex", "Professional Summary", "section*"),
+    ]
+    assert client.get("/api/projects/" + "0" * 32 + "/outline").status_code == 404

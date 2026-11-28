@@ -4,6 +4,8 @@ status: proposed
 
 # Own agent loop instead of LangChain and LangGraph
 
+> Renamed to PrismTeX on 2026-11-25: read `openprism` as `prismtex` and `OPENPRISM_` as `PRISMTEX_`.
+
 The agent runs on a small loop we own, over a provider port with three production adapters: Anthropic SDK, OpenAI-compatible SDK, and Ollama's native `/api/chat`. A fake adapter covers tests. We dropped LangGraph's `create_react_agent`, which was deprecated in LangGraph 1.0.
 
 The deciding facts:
