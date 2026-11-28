@@ -275,17 +275,21 @@ class Compiler:
             if not ok and not has_error:
                 found = [*found, _failure_reason(run.exit_code, pdf_path, reading.log_text)]
             diagnostics = tuple(found)
-            if pdf_path is not None and engine in AUDITED_ENGINES:
-                # The PDF may carry a file read from outside the project
-                # (pdfTeX \pdfobj bypasses openin_any); discard it (SECURITY-1).
-                offending = audit_inputs(out, src, env=env)
-                if offending:
-                    pdf_path.unlink(missing_ok=True)
-                    pdf_path = None
-                    status = "failed"
-                    diagnostics = (_access_denied(offending), *diagnostics)
 
         text = _cap_text(_combined_log(run.output, run.truncated, stem, reading.log_text))
+        # A file read from outside the project can reach the PDF (pdfTeX
+        # \pdfobj; any \input since TeX Live 2026 ignores openin_any) and also
+        # the log and the messages parsed from it (\read, then \message). The
+        # audit runs with or without a PDF, and a flagged read withholds all
+        # three (SECURITY-1).
+        offending = audit_inputs(out, src, env=env) if engine in AUDITED_ENGINES else []
+        if offending:
+            if pdf_path is not None:
+                pdf_path.unlink(missing_ok=True)
+            pdf_path = None
+            status = "failed"
+            diagnostics = (_access_denied(offending),)
+            text = WITHHELD_LOG_TEXT
         if log_path is not None:
             _write_text(log_path, text)
         return CompileResult(
@@ -470,12 +474,19 @@ def _mirror_tree(src: Path, out: Path) -> None:
             (out / rel / name).mkdir(parents=True, exist_ok=True)
 
 
+WITHHELD_LOG_TEXT = (
+    "The compile log was withheld: the document read a file outside the project, and the "
+    "log could contain that file's contents. Remove the reads named in the error and "
+    "compile again.\n"
+)
+
+
 def _access_denied(offending: list[str]) -> Diagnostic:
-    """The error for a PDF discarded because it was built from a read outside the project."""
+    """The error for a compile whose output was withheld after a read outside the project."""
     shown = ", ".join(f"'{path}'" for path in offending[:5])
     message = (
         f"A file outside the project was read while building the PDF ({shown}); the PDF "
-        "was discarded. A project can only read files inside its own folder."
+        "and the log were discarded. A project can only read files inside its own folder."
     )
     return Diagnostic(None, None, "error", "access_denied", message)
 

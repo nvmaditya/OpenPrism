@@ -39,13 +39,13 @@ A page you visit in your browser could try to send requests to `127.0.0.1:8000`.
 
 ### A malicious project running code or reading files during a compile
 
-An imported ZIP can contain TeX written to attack the machine that compiles it. The hardening below stops a project from choosing its own flags, running shell commands, and writing outside the build folder. It does **not** make reading the filesystem safe: TeX itself has read holes that `openin_any` does not cover, so each is mitigated, not closed.
+An imported ZIP can contain TeX written to attack the machine that compiles it. The hardening below stops a project from choosing its own flags, running shell commands, and writing outside the build folder. It does **not** make reading the filesystem safe. TeX itself has read holes, and since TeX Live 2026 kpathsea no longer restricts reads at all (`openin_any` is ignored), so each hole is mitigated, not closed.
 
 What the hardening stops:
 
 - The server builds the latexmk command and environment itself, from a validated root file and engine. The root file must be an existing `.tex` file inside the project and must not start with `-`.
 - Shell escape is off (`-no-shell-escape`), so `\write18` cannot run commands. latexmk ignores every `latexmkrc`, including one in the project (`-norc`).
-- `openin_any=p` and `openout_any=p` make ordinary `\input`, `\openout` and kpathsea reads refuse absolute paths, `..` and dotfiles. Build output goes to the data directory, never into the project folder.
+- `openout_any=p` makes `\openout` refuse absolute paths, `..` and dotfiles, so TeX cannot write outside the build folder. Build output goes to the data directory, never into the project folder. (`openin_any=p` is also set, but only TeX Live before 2026 honours it; see below.)
 - TeX gets a reduced environment, so the server's secrets are not among the variables it is handed.
 - stdin is closed, a timeout kills the whole process tree, and output is capped.
 - ZIP imports are checked before anything is extracted: total size, file count, compression ratio, no symlinks, and no paths that leave the project.
@@ -53,7 +53,7 @@ What the hardening stops:
 
 What is only mitigated — the read holes in TeX itself:
 
-- **pdfTeX's `\pdfobj ... file`** copies any file the server account can read into the PDF, bypassing `openin_any`. For `pdflatex` and `xelatex` this is caught by a post-run audit of the `.fls` recorder: if the engine read outside the project, the build folder and the TeX trees, the PDF is deleted and the compile fails with `access_denied`. The audit runs after the fact and depends on the recorder, so it is a mitigation, not a sandbox.
+- **Reading any file.** pdfTeX's `\pdfobj ... file` copies any file the server account can read into the PDF, and on TeX Live 2026 and later so do plain `\input` and `\openin`, which can also put a file's lines into the log (`\read`, then `\message`). For `pdflatex` and `xelatex` this is caught by a post-run audit of the `.fls` recorder: if the engine read outside the project, the build folder, the TeX trees and kpathsea's `texmf.cnf` files, the PDF, the log and its messages are withheld and the compile fails with `access_denied`. The audit runs after the fact and depends on the recorder, so it is a mitigation, not a sandbox.
 - **LuaLaTeX's Lua layer** reads arbitrary files, directory listings and `/proc/<pid>/environ` even under `--safer`, none of it recorded. So `lualatex` is disabled at compile time this release (a compile with it returns `unavailable`); it is still accepted as a project setting.
 - **Biber** can execute code from a crafted control file and read data sources outside the project. It runs through a server-owned guard that vets the `.bcf` and runs `biber --noconf`; where the guard cannot be named (a Python path with a space), Biber is disabled rather than run unguarded.
 - **`/proc/<server-pid>/environ`** is closed on Linux by `prctl(PR_SET_DUMPABLE, 0)` at startup — for a same-uid reader only. A server running as **root** is not protected, so do not run PrismTeX as root.

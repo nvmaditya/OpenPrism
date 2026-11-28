@@ -73,9 +73,17 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the LaTeX packages the templates and tests need
+        # mirror.ctan.org sends each attempt to a random mirror, and a mirror
+        # that is down fails tlmgr outright, so a failed attempt is retried.
         run: |
-          tlmgr update --self
-          tlmgr install latexmk latex-bin luatex biber biblatex logreq amsmath amsfonts graphics booktabs hyperref geometry titlesec tools l3kernel iftex
+          for attempt in 1 2 3; do
+            if tlmgr update --self && tlmgr install latexmk latex-bin luatex biber biblatex logreq amsmath amsfonts graphics booktabs hyperref geometry titlesec tools l3kernel iftex; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            echo "tlmgr failed (attempt $attempt); retrying with another mirror"
+            sleep 15
+          done
           latexmk -v
       - name: Install the backend
         run: |

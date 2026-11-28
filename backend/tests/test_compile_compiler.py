@@ -26,6 +26,7 @@ from prismtex.compile import (
     Compiler,
     build_latexmk_argv,
 )
+from prismtex.compile.compiler import WITHHELD_LOG_TEXT
 from prismtex.errors import (
     InvalidRequest,
     LogNotFound,
@@ -214,7 +215,7 @@ if record:
     with open(record, "a") as f:
         f.write(json.dumps({{"argv": args, "cwd": os.getcwd(), "env": dict(os.environ),
                              "start": time.monotonic()}}) + "\\n")
-for suffix in ("log", "blg"):
+for suffix in ("log", "blg", "fls"):
     if behaviour.get(suffix) is not None:
         (out / f"{{stem}}.{{suffix}}").write_text(behaviour[suffix])
 if behaviour.get("pdf"):
@@ -594,3 +595,32 @@ def test_deleted_project_does_not_get_its_state_back(
     store.delete(info.id)
     worker.join()
     assert not store.layout.state(info.id).exists()
+
+
+@posix_only
+@pytest.mark.parametrize("pdf", [True, False])
+def test_a_read_outside_the_project_withholds_the_pdf_the_log_and_its_messages(
+    store: ProjectStore, fake_tex: MakeCompiler, tmp_path: Path, pdf: bool
+) -> None:
+    # SECURITY-1: since TeX Live 2026 ignores openin_any, \openin and \read can
+    # copy any readable file into the log; a document with no pages writes no
+    # PDF, so the audit runs either way.
+    info = store.create(kind="blank")
+    secret = tmp_path / "outside" / "secret.txt"
+    secret.parent.mkdir()
+    secret.write_text("PRISMTEX-SECRET-UNIT\n", encoding="utf-8")
+    src = store.project_dir(info.id).resolve()
+    log = CLEAN_LOG + "\nPackage x Warning: PRISMTEX-SECRET-UNIT on input line 3.\n"
+    fls = f"PWD {src}\nINPUT main.tex\nINPUT {secret}\n"
+    compiler = fake_tex(pdf=pdf, log=log, fls=fls, output="LEAK PRISMTEX-SECRET-UNIT\n")
+
+    result = compiler.compile(info.id)
+
+    assert result.status == "failed" and result.pdf_path is None
+    assert not (store.layout.out(info.id) / "main.pdf").exists()
+    assert result.log_text == WITHHELD_LOG_TEXT
+    assert [d.kind for d in result.diagnostics] == ["access_denied"]
+    assert str(secret) in result.diagnostics[0].message
+    assert result.log_id is not None
+    stored = compiler.get_log(info.id, result.log_id)["log"]
+    assert "PRISMTEX-SECRET-UNIT" not in stored

@@ -77,3 +77,29 @@ def test_a_font_generated_into_the_users_texmf_var_is_not_flagged(
     offending = flsaudit.audit_inputs(out, src, env={"PATH": "/x", "HOME": str(home)})
 
     assert offending == [str(secret)]
+
+
+def test_only_the_exact_texmf_cnf_files_kpathsea_lists_are_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # TeX Live keeps its main texmf.cnf above every tree, and the recorder lists it.
+    install = tmp_path / "texlive" / "2026"
+    install.mkdir(parents=True)
+    cnf = install / "texmf.cnf"
+    cnf.write_text("% config\n")
+    sibling = install / "release-texlive.txt"
+    sibling.write_text("not a tree\n")
+
+    def run(argv: Sequence[str], **_: Any) -> Any:
+        stdout = f"{cnf}\n" if list(argv[1:]) == ["-all", "texmf.cnf"] else "\n"
+        return subprocess.CompletedProcess(list(argv), 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(flsaudit.subprocess, "run", run)
+    monkeypatch.setattr(flsaudit.shutil, "which", lambda name, path=None: "/fake/kpsewhich")
+    monkeypatch.setattr(flsaudit, "_roots_cache", {})
+    src, out = tmp_path / "src", tmp_path / "out"
+    src.mkdir()
+    out.mkdir()
+    (out / "main.fls").write_text(f"PWD {src}\nINPUT {cnf}\nINPUT {sibling}\n", encoding="utf-8")
+
+    assert flsaudit.audit_inputs(out, src, env={"PATH": "/x"}) == [str(sibling)]

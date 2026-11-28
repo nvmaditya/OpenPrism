@@ -1,15 +1,16 @@
 """Post-run audit that TeX read only files inside the allowed roots.
 
-pdfTeX's ``\\pdfobj ... file`` opens a file without kpathsea's ``openin_any``
-check and can copy its bytes into the PDF, so the argv and env hardening does
-not stop a read outside the project (verified on TeX Live 2023; see
+Nothing in the argv and env hardening stops a read outside the project.
+pdfTeX's ``\\pdfobj ... file`` never went through kpathsea's ``openin_any``
+check, and since TeX Live 2026 kpathsea ignores ``openin_any`` altogether, so
+``\\input`` and ``\\openin`` read any file the server account can read (see
 docs/compile.md). latexmk runs the engine with ``-recorder``, which lists
 every file the engine opened as an ``INPUT`` line in ``<stem>.fls``. After the
-run this module resolves each INPUT and checks it against three places a
+run this module resolves each INPUT and checks it against the places a
 compile may legitimately read: the project folder, the build (out) folder,
-and the TeX installation's own trees (``kpsewhich -var-value=TEXMF``). A read
-anywhere else means the PDF may carry a file it should not, so the caller
-discards the PDF and fails the compile.
+the TeX installation's own trees (``kpsewhich -var-value=TEXMF``) and
+kpathsea's texmf.cnf files. A read anywhere else means the PDF or the log may
+carry a file it should not, so the caller discards both and fails the compile.
 
 This is a mitigation, not a sandbox. It audits after the run, so a read that
 happens on an earlier latexmk pass but not the final one can be missed, and it
@@ -24,7 +25,7 @@ import os
 import shutil
 import subprocess
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 __all__ = ["AUDITED_ENGINES", "audit_inputs"]
@@ -78,8 +79,27 @@ def _expand(value: str) -> list[str]:
     return trees
 
 
-def _texmf_roots(kpsewhich: str | None, env: Mapping[str, str]) -> frozenset[str]:
-    """Real paths of the TeX trees as the compile saw them, cached per environment.
+def _kpsewhich(kpsewhich: str, args: list[str], env: Mapping[str, str]) -> str:
+    try:
+        return subprocess.run(
+            [kpsewhich, *args],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=dict(env),
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _cached(
+    kind: str,
+    kpsewhich: str | None,
+    env: Mapping[str, str],
+    compute: Callable[[str, dict[str, str]], frozenset[str]],
+) -> frozenset[str]:
+    """`compute(kpsewhich, query_env)`, cached per kind, executable and environment.
 
     kpsewhich runs in the compile's own environment: the per-user trees
     (TEXMFHOME, TEXMFVAR, TEXMFCONFIG) expand from HOME or USERPROFILE, and
@@ -87,32 +107,47 @@ def _texmf_roots(kpsewhich: str | None, env: Mapping[str, str]) -> frozenset[str
     different environment would put those trees somewhere TeX never looked.
     """
     query_env = {name: value for name, value in env.items() if name not in _PER_RUN_VARS}
-    key = (kpsewhich or "", tuple(sorted(query_env.items())))
+    key = (f"{kind}:{kpsewhich or ''}", tuple(sorted(query_env.items())))
     with _roots_lock:
         cached = _roots_cache.get(key)
     if cached is not None:
         return cached
-
-    found: set[str] = set()
-    if kpsewhich is not None:
-        for var in _TEXMF_VARS:
-            try:
-                out = subprocess.run(
-                    [kpsewhich, f"-var-value={var}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    env=query_env,
-                    check=False,
-                ).stdout
-            except (OSError, subprocess.SubprocessError):
-                continue
-            found.update(_expand(out))
-    found.update(_STATIC_ROOTS)
-    roots = frozenset(os.path.realpath(path) for path in found if os.path.isdir(path))
+    result = compute(kpsewhich, query_env) if kpsewhich is not None else frozenset()
     with _roots_lock:
-        _roots_cache[key] = roots
-    return roots
+        _roots_cache[key] = result
+    return result
+
+
+def _texmf_roots(kpsewhich: str | None, env: Mapping[str, str]) -> frozenset[str]:
+    """Real paths of the TeX trees as the compile saw them."""
+
+    def compute(exe: str, query_env: dict[str, str]) -> frozenset[str]:
+        found: set[str] = set()
+        for var in _TEXMF_VARS:
+            found.update(_expand(_kpsewhich(exe, [f"-var-value={var}"], query_env)))
+        return frozenset(found)
+
+    found = set(_cached("trees", kpsewhich, env, compute)) | set(_STATIC_ROOTS)
+    return frozenset(os.path.realpath(path) for path in found if os.path.isdir(path))
+
+
+def _config_files(kpsewhich: str | None, env: Mapping[str, str]) -> frozenset[str]:
+    """Real paths of the texmf.cnf files kpathsea reads.
+
+    TeX Live keeps its main texmf.cnf at the top of the installation, above
+    every tree, and the recorder lists it. Only these exact files are allowed,
+    not the folders around them.
+    """
+
+    def compute(exe: str, query_env: dict[str, str]) -> frozenset[str]:
+        listed = _kpsewhich(exe, ["-all", "texmf.cnf"], query_env).splitlines()
+        return frozenset(
+            os.path.realpath(line.strip())
+            for line in listed
+            if line.strip() and os.path.isabs(line.strip()) and os.path.isfile(line.strip())
+        )
+
+    return _cached("config", kpsewhich, env, compute)
 
 
 def _input_paths(fls_text: str) -> tuple[str | None, list[str]]:
@@ -146,6 +181,7 @@ def audit_inputs(out_dir: Path, src_dir: Path, *, env: Mapping[str, str]) -> lis
         os.path.realpath(src_dir),
         os.path.realpath(out_dir),
     }
+    allowed_files = _config_files(kpsewhich, env)
     offending: list[str] = []
     seen: set[str] = set()
     for fls in sorted(out_dir.glob("*.fls")):
@@ -157,7 +193,9 @@ def audit_inputs(out_dir: Path, src_dir: Path, *, env: Mapping[str, str]) -> lis
         base = pwd if (pwd and os.path.isabs(pwd)) else os.fspath(src_dir)
         for raw in inputs:
             resolved = os.path.realpath(raw if os.path.isabs(raw) else os.path.join(base, raw))
-            if not _inside(resolved, allowed) and raw not in seen:
+            if resolved in allowed_files or _inside(resolved, allowed):
+                continue
+            if raw not in seen:
                 seen.add(raw)
                 offending.append(raw)
     offending.sort()

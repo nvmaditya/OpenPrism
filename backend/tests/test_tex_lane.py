@@ -202,8 +202,10 @@ def test_input_of_an_absolute_path_is_blocked(
     result = compiler.compile(pid)
     assert result.status == "failed"
     assert result.pdf_path is None
-    assert "PRISMTEX-SECRET-ABSOLUTE" not in result.log_text
-    assert {"missing_file", "access_denied"} <= _kinds(result)
+    _assert_not_leaked(result, "PRISMTEX-SECRET-ABSOLUTE")
+    # TeX Live before 2026 refuses the read (openin_any); 2026 and later read
+    # the file and the audit flags it. Either way it is an access_denied.
+    assert "access_denied" in _kinds(result)
 
 
 def test_input_of_a_system_file_is_blocked(store: ProjectStore, compiler: Compiler) -> None:
@@ -213,11 +215,36 @@ def test_input_of_a_system_file_is_blocked(store: ProjectStore, compiler: Compil
     pid = _project(store, {"main.tex": _article(f"\\input{{{target.as_posix()}}}")})
     result = compiler.compile(pid)
     assert result.status == "failed"
-    assert "missing_file" in _kinds(result)
-    if sys.platform != "win32":  # the refusal message is TeX Live's kpathsea wording
+    assert result.pdf_path is None
+    if sys.platform != "win32":  # kpathsea's refusal and the audit both name the path
         assert any(
             d.kind == "access_denied" and target.as_posix() in d.message for d in result.diagnostics
         )
+
+
+def test_a_file_read_into_the_log_is_withheld(
+    store: ProjectStore, compiler: Compiler, outside: Path
+) -> None:
+    # No page is shipped, so no PDF is written: the log is the only way out.
+    secret = outside / "secret-log.txt"
+    secret.write_text("PRISMTEX-SECRET-LOG\n", encoding="utf-8")
+    body = (
+        "\\newread\\leak\\immediate\\openin\\leak="
+        f"{secret.as_posix()}\n"
+        "\\ifeof\\leak\\else\\immediate\\read\\leak to\\line"
+        "\\message{LEAK[\\line]}\\PackageWarning{x}{\\line}\\fi"
+    )
+    pid = _project(store, {"main.tex": _article(body)})
+    result = compiler.compile(pid)
+    assert result.pdf_path is None
+    _assert_not_leaked(result, "PRISMTEX-SECRET-LOG")
+    [meta] = compiler.logs(pid)
+    assert "PRISMTEX-SECRET-LOG" not in compiler.get_log(pid, meta["log_id"])["log"]
+
+
+def _assert_not_leaked(result: CompileResult, secret: str) -> None:
+    assert secret not in result.log_text
+    assert all(secret not in d.message for d in result.diagnostics)
 
 
 def test_input_of_a_parent_path_is_blocked(store: ProjectStore, compiler: Compiler) -> None:
@@ -229,8 +256,9 @@ def test_input_of_a_parent_path_is_blocked(store: ProjectStore, compiler: Compil
     finally:
         neighbour.unlink()
     assert result.status == "failed"
-    assert "PRISMTEX-SECRET-PARENT" not in result.log_text
-    assert "missing_file" in _kinds(result)
+    assert result.pdf_path is None
+    _assert_not_leaked(result, "PRISMTEX-SECRET-PARENT")
+    assert _kinds(result) & {"missing_file", "access_denied"}
 
 
 def test_write18_is_disabled(store: ProjectStore, compiler: Compiler) -> None:
