@@ -30,7 +30,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-prismtex = ["workspace/templates/**/*"]
+prismtex = ["workspace/templates/**/*", "agent/data/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
