@@ -2,16 +2,29 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Response, UploadFile
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
-from prismtex.api.deps import CompilerDep, SettingsDep, StoreDep
+from prismtex.api.deps import CompilerDep, HistoryDep, SettingsDep, StoreDep
 from prismtex.errors import PayloadTooLarge, ProjectBusy
-from prismtex.workspace import UNSET, Engine, ProjectInfo, ProjectKind, TemplateKind
+from prismtex.history import History
+from prismtex.settings import Settings
+from prismtex.workspace import (
+    UNSET,
+    Engine,
+    ImportSource,
+    ProjectInfo,
+    ProjectKind,
+    ProjectStore,
+    TemplateKind,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+log = logging.getLogger("prismtex.api.projects")
 
 
 class ProjectOut(BaseModel):
@@ -56,12 +69,34 @@ def create_project(body: CreateProject, store: StoreDep) -> ProjectOut:
 
 
 @router.post("/import", status_code=201)
-def import_project(
+async def import_project(
     store: StoreDep,
     settings: SettingsDep,
+    history: HistoryDep,
     file: Annotated[UploadFile, File(description="A ZIP archive of a LaTeX project")],
     name: Annotated[str | None, Form(max_length=1000)] = None,
+    source: Annotated[
+        ImportSource,
+        Form(
+            description=(
+                "Where the archive comes from: auto, overleaf or prism. prism leaves out a "
+                "conversations/ folder at the top; auto picks prism when there is one."
+            )
+        ),
+    ] = "auto",
 ) -> ProjectOut:
+    info = await run_in_threadpool(_import, store, settings, file, name, source)
+    await _checkpoint_import(history, info)
+    return _out(info)
+
+
+def _import(
+    store: ProjectStore,
+    settings: Settings,
+    file: UploadFile,
+    name: str | None,
+    source: ImportSource,
+) -> ProjectInfo:
     stream = file.file
     size = file.size
     if size is None:
@@ -69,7 +104,18 @@ def import_project(
     if size > store.import_max_bytes:
         raise PayloadTooLarge(settings.import_max_mb)
     stream.seek(0)
-    return _out(store.import_zip(stream, name=name))
+    return store.import_zip(stream, name=name, source=source)
+
+
+async def _checkpoint_import(history: History, info: ProjectInfo) -> None:
+    """Take the project's `import` Checkpoint; a failure is logged, never raised.
+
+    The project is already on disk by now, so the import stands without it.
+    """
+    try:
+        await history.checkpoint(info.id, reason="import", message=f"Import {info.name}")
+    except Exception:
+        log.warning("The import checkpoint of project %s failed", info.id, exc_info=True)
 
 
 @router.get("/{project_id}")

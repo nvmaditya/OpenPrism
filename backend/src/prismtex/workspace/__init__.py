@@ -33,10 +33,16 @@ from prismtex.workspace.text import (
     detect_eol,
     encode_text,
 )
-from prismtex.workspace.zipimport import ValidatedZip, detect_root_file
+from prismtex.workspace.zipimport import (
+    IMPORT_SOURCES,
+    ImportSource,
+    ValidatedZip,
+    detect_root_file,
+)
 
 __all__ = [
     "ENGINES",
+    "IMPORT_SOURCES",
     "SOURCE_EXTENSIONS",
     "UNSET",
     "AgentProfile",
@@ -45,6 +51,7 @@ __all__ = [
     "Eol",
     "FileEntry",
     "FileVersion",
+    "ImportSource",
     "PathDenied",
     "PathPolicyError",
     "ProjectInfo",

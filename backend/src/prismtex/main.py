@@ -13,6 +13,7 @@ from prismtex.api import files, health, outline, projects
 from prismtex.compile import Compiler, CompileService
 from prismtex.compile.tree import ScratchTreeCompiler
 from prismtex.errors import PayloadTooLarge, error_response, install_error_handlers
+from prismtex.history import GitShadowHistory, History, NullHistory
 from prismtex.layout import DataLayout
 from prismtex.migrate import migrate_legacy_projects
 from prismtex.security import SecurityMiddleware
@@ -75,6 +76,9 @@ def create_app(
     tree_compiler = ScratchTreeCompiler(service, layout)
     tree_compiler.sweep()
     app.state.tree_compiler = tree_compiler
+    # Without a working git, nothing is saved to History and the app still runs.
+    history: History = GitShadowHistory.detect(layout.history_root, store) or NullHistory()
+    app.state.history = history
 
     for router in (
         health.router,

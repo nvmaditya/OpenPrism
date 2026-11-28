@@ -53,7 +53,12 @@ from prismtex.workspace.text import (
     detect_eol,
     encode_text,
 )
-from prismtex.workspace.zipimport import ValidatedZip, detect_root_file
+from prismtex.workspace.zipimport import (
+    IMPORT_SOURCES,
+    ImportSource,
+    ValidatedZip,
+    detect_root_file,
+)
 
 Engine = Literal["pdflatex", "xelatex", "lualatex"]
 ProjectKind = Literal["blank", "paper", "resume", "import"]
@@ -206,9 +211,23 @@ class ProjectStore:
             raise
         return info
 
-    def import_zip(self, stream: BinaryIO, *, name: str | None = None) -> ProjectInfo:
+    def import_zip(
+        self, stream: BinaryIO, *, name: str | None = None, source: ImportSource = "auto"
+    ) -> ProjectInfo:
+        """Create a project from a ZIP archive once every import check has passed.
+
+        `source` "prism" leaves out the `conversations/` folder of an OpenAI
+        Prism export, "overleaf" keeps every file the checks keep, and "auto"
+        picks "prism" when that folder is at the top after the top-folder strip.
+        Bytes are written as they are in the archive.
+        """
+        if source not in IMPORT_SOURCES:
+            raise InvalidRequest("The source must be auto, overleaf or prism.", field="source")
         with ValidatedZip.open(
-            stream, max_bytes=self.import_max_bytes, max_files=self.import_max_files
+            stream,
+            max_bytes=self.import_max_bytes,
+            max_files=self.import_max_files,
+            source=source,
         ) as archive:
             info = self._new_info("import", name, root_file=None)
             project_dir = self.layout.project_dir(info.id)
