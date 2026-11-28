@@ -54,6 +54,12 @@ DOMAIN_ERRORS: list[tuple[AppError, int, str, dict[str, object]]] = [
     (errors.ProjectBusy("p1"), 409, "project_busy", {"project_id": "p1"}),
     (errors.UnsafeProjectFile("a.tex"), 409, "unsafe_project_file", {"path": "a.tex"}),
     (errors.LogNotFound("l1"), 404, "log_not_found", {"log_id": "l1"}),
+    (
+        errors.CheckpointNotFound("c1"),
+        404,
+        "checkpoint_not_found",
+        {"checkpoint_id": "c1"},
+    ),
     (errors.PdfNotFound(), 404, "pdf_not_found", {}),
 ]
 

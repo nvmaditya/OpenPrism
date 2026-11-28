@@ -395,6 +395,27 @@ class ProjectStore:
             _atomic_write(target, data, rel)
         return FileEntry(rel, len(data), file_kind(rel))
 
+    def replace_bytes(
+        self, project_id: str, path: str, data: bytes, *, expected_version: str | None
+    ) -> str:
+        """Write `data` as given if the file still has `expected_version`.
+
+        `expected_version` None means the file must not exist yet. Otherwise
+        VersionConflict carries the current version (None when the file is
+        gone). Returns the new content version. History restores files with
+        this, so a file gets back its exact bytes, line endings included.
+        """
+        rel, target = self._locate(project_id, path)
+        with self._lock(project_id):
+            if target.is_dir():
+                raise InvalidRequest(f"'{rel}' is a folder.", field="path")
+            current = content_version(target.read_bytes()) if target.is_file() else None
+            if current != expected_version:
+                raise VersionConflict(rel, current)
+            _ensure_parent(self.layout.project_dir(project_id), rel, target)
+            _atomic_write(target, data, rel)
+        return content_version(data)
+
     def upload(self, project_id: str, *, filename: str, data: bytes, folder: str = "") -> FileEntry:
         """Store an uploaded file at `<folder>/<basename of filename>`, overwriting."""
         basename = filename.replace("\\", "/").rsplit("/", 1)[-1]

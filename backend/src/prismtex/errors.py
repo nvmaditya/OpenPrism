@@ -190,6 +190,14 @@ class LogNotFound(AppError):
         super().__init__("This compile log does not exist.", log_id=log_id)
 
 
+class CheckpointNotFound(AppError):
+    status = 404
+    code = "checkpoint_not_found"
+
+    def __init__(self, checkpoint_id: str) -> None:
+        super().__init__("This checkpoint does not exist.", checkpoint_id=checkpoint_id)
+
+
 class PdfNotFound(AppError):
     status = 404
     code = "pdf_not_found"
