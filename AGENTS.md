@@ -23,7 +23,7 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
   - `compile/`: latexmk argv and environment, the hardened runner, log parsing, `Compiler`, compile logs, source trees with scratch compiles and the shared compile cache (`tree.py`), and a TeX-free tree compiler for tests (`fake.py`).
   - `agent/`: the writing agent (agent design). So far, these modules:
     - `types.py`, `errors.py`, `events.py` and `trace.py`: value types, errors, the versioned event union and the per-Turn Trace.
-    - `providers/`: the model port, the catalog, tool-argument parsing and the fakes tests use.
+    - `providers/`: the model port, the catalog, tool-argument parsing, the Anthropic adapter (`anthropic.py`, which needs a cost ledger path to be built) and the fakes tests use.
     - `budget.py`: the Turn limits, the cost guard and the fsynced cost ledger shared by every process that makes paid calls.
     - `tools.py`.
   - `api/`: FastAPI routers.
