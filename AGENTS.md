@@ -18,7 +18,7 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
   - `migrate.py`: one-time migration of legacy `.prism/` folders.
   - `cancel.py`: `CancelToken`, the cancellation flag a Turn polls and awaits.
   - `workspace/`: path policy, text versions and line endings, `ProjectStore`, ZIP import, project templates.
-  - `outline/`: the outline parser.
+  - `outline/`: the Outline (headings with their spans, the `\input` graph, labels, citations and packages) and the per-file parser behind `GET /outline`.
   - `compile/`: latexmk argv and environment, the hardened runner, log parsing, `Compiler`, compile logs.
   - `api/`: FastAPI routers.
 - `backend/tests/`: pytest. Tests marked `tex` need a real TeX installation.
