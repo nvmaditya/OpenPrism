@@ -34,6 +34,8 @@ prismtex = ["workspace/templates/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# backend/ on sys.path, so tests import shared helpers as `tests.<path>` (no __init__.py).
+pythonpath = ["."]
 markers = [
   "tex: needs a real TeX installation (latexmk); fails, never skips, when TeX is missing",
 ]

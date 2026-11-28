@@ -4,7 +4,7 @@ Guide for coding agents and human contributors working in this repository. [CONT
 
 ## What this is
 
-PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores projects and compiles them with latexmk, and a Next.js UI. The AI writing agent is being rebuilt and returns in Phase 1 (v0.1.0); there is no agent code in the tree today.
+PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores projects and compiles them with latexmk, and a Next.js UI. The AI writing agent is being rebuilt for Phase 1 (v0.1.0). Its building blocks are in `agent/`, but nothing serves it yet.
 
 ## Repository map
 
@@ -20,6 +20,10 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
   - `workspace/`: path policy, text versions and line endings, `ProjectStore`, ZIP import, project templates.
   - `outline/`: the Outline (headings with their spans, the `\input` graph, labels, citations and packages) and the per-file parser behind `GET /outline`.
   - `compile/`: latexmk argv and environment, the hardened runner, log parsing, `Compiler`, compile logs.
+  - `agent/`: the writing agent (agent design). So far, these modules:
+    - `types.py`, `errors.py`, `events.py` and `trace.py`: value types, errors, the versioned event union and the per-Turn Trace.
+    - `providers/`: the model port, the catalog, tool-argument parsing and the fakes tests use.
+    - `budget.py` and `tools.py`.
   - `api/`: FastAPI routers.
 - `backend/tests/`: pytest. Tests marked `tex` need a real TeX installation.
 - `frontend/`: the Next.js UI. `lib/api.ts` is the only API client.
