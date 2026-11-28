@@ -15,7 +15,9 @@ OUT = Path("/data/build/p/out").resolve()
 
 # The guard latexmk is told to run instead of biber (always wired, even on
 # POSIX, because it closes the Biber outside-read and the eval-based RCE).
-BIBER_E = f"$biber=q{{{sys.executable} -P -m prismtex.compile.biberguard %O %S}}"
+# argv writes the interpreter path with forward slashes (latexmk and cmd.exe accept them).
+PYTHON = sys.executable.replace("\\", "/")
+BIBER_E = f"$biber=q{{{PYTHON} -P -m prismtex.compile.biberguard %O %S}}"
 
 
 def _tail(out: Path) -> list[str]:
@@ -94,9 +96,11 @@ def test_biber_is_disabled_when_the_guard_cannot_be_named(
     assert "biberguard" not in " ".join(argv)
 
 
+@pytest.mark.tex
 def test_resolve_tools_finds_real_tex_binaries() -> None:
     tools = resolve_tools(os.environ.get("PATH"))
-    # pdflatex, bibtex, biber and kpsewhich are present in the TeX lane's env.
+    # pdflatex, bibtex, biber and kpsewhich are present in the TeX lane's env,
+    # so this runs there; the fast lane has no TeX on PATH.
     pdflatex = tools.get("pdflatex")
     assert pdflatex is not None and os.path.isabs(pdflatex)
 

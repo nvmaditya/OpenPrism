@@ -7,7 +7,6 @@ missing: a lane that silently skips proves nothing.
 from __future__ import annotations
 
 import os
-import resource
 import shutil
 import subprocess
 import sys
@@ -463,11 +462,11 @@ def test_a_runaway_log_times_out_without_parsing_gigabytes(store: ProjectStore) 
         {"main.tex": _article(f"\\def\\x{{\\message{{{message}}}\\x}}\\x")},
     )
     compiler = Compiler(store, timeout_s=3)
-    before_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    before_rss = _peak_rss_kib()
     started = time.monotonic()
     result = compiler.compile(pid)
     elapsed = time.monotonic() - started
-    after_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    after_rss = _peak_rss_kib()
 
     assert result.status == "timeout"
     assert [d.kind for d in result.diagnostics] == ["timeout"]
@@ -477,7 +476,22 @@ def test_a_runaway_log_times_out_without_parsing_gigabytes(store: ProjectStore) 
     # The log on disk is far larger than what was read into memory.
     log_on_disk = store.layout.out(pid) / "main.log"
     assert log_on_disk.stat().st_size > 8 * 2**20
-    assert (after_rss - before_rss) < 400 * 1024  # ru_maxrss is KiB on Linux
+    if before_rss is not None and after_rss is not None:
+        assert (after_rss - before_rss) < 400 * 1024
+
+
+def _peak_rss_kib() -> int | None:
+    """This process's peak resident set size in KiB, or None on Windows.
+
+    `resource` is POSIX-only, so the memory bound is checked on Linux and
+    macOS; the timeout and log-size checks above run everywhere.
+    """
+    if sys.platform == "win32":
+        return None
+    import resource
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak // 1024 if sys.platform == "darwin" else peak  # bytes on macOS
 
 
 # -- diagnostics -------------------------------------------------------------------

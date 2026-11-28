@@ -75,7 +75,7 @@ jobs:
       - name: Install the LaTeX packages the templates and tests need
         run: |
           tlmgr update --self
-          tlmgr install latexmk latex-bin luatex biber biblatex logreq amsmath amsfonts graphics booktabs hyperref geometry titlesec tools l3kernel l3backend iftex
+          tlmgr install latexmk latex-bin luatex biber biblatex logreq amsmath amsfonts graphics booktabs hyperref geometry titlesec tools l3kernel iftex
           latexmk -v
       - name: Install the backend
         run: |

@@ -50,6 +50,11 @@ class _CappedReader:
     """
 
     def __init__(self, pipe: IO[bytes], limit: int) -> None:
+        # The reader holds the pipe and is the only thing that closes it, once
+        # its read has ended. On Windows, closing a pipe while another thread
+        # is blocked reading it waits for that read, so a leftover process that
+        # holds the pipe would stall whoever dropped the last reference.
+        self._pipe = pipe
         self._fd = pipe.fileno()
         self._limit = limit
         self._chunks: list[bytes] = []
@@ -70,6 +75,8 @@ class _CappedReader:
                     self._kept += len(chunk)
         except OSError:
             pass
+        finally:
+            self._pipe.close()
 
     def join(self, timeout: float) -> bool:
         self._thread.join(timeout)
@@ -161,14 +168,13 @@ def run_hardened(
         proc.wait()
         raise
     finally:
-        drained = reader.join(_DRAIN_GRACE_S)
-        if not drained:
+        if not reader.join(_DRAIN_GRACE_S):
             _kill_tree(proc)
-            drained = reader.join(_DRAIN_GRACE_S)
-        # Closing the pipe under a reader that is still blocked on it could
-        # hand its descriptor number to an unrelated file, so leave it open.
-        if drained:
-            proc.stdout.close()
+            # Still blocked means a process outside the tree holds the pipe
+            # (on Windows, taskkill /T cannot reach the children of a parent
+            # that has exited). The reader keeps draining and closes the pipe
+            # when that process ends; the pipe is never closed under it here.
+            reader.join(_DRAIN_GRACE_S)
 
     return RunOutcome(
         exit_code=exit_code,
