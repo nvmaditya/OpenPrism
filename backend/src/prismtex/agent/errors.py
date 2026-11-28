@@ -47,6 +47,11 @@ class TurnNotFound(AgentError):
         super().__init__("turn_not_found", "This turn does not exist.", turn_id=turn_id)
 
 
+class ThreadNotFound(AgentError):
+    def __init__(self, thread_id: str) -> None:
+        super().__init__("thread_not_found", "This thread does not exist.", thread_id=thread_id)
+
+
 class ProposalNotFound(AgentError):
     def __init__(self, proposal_id: str) -> None:
         super().__init__(
