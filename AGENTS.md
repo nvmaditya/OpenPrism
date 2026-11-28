@@ -27,7 +27,7 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
     - `budget.py`: the Turn limits, the cost guard and the fsynced cost ledger shared by every process that makes paid calls.
     - `staging.py`: the Turn's base (every Source file once, a dirty buffer in place of its file) and the overlay its edits land in; nothing reaches the disk.
     - `proposals.py`: Hunks, rebase and line maps, and `ProposalDesk`, which keeps each project's open proposal under `state/<id>/proposals/` and is the only writer of agent text (accept hunk by hunk, with a `save` and an `accept` Checkpoint).
-    - `verify.py`: for now only the records a proposal carries (`Verification`, `DiagnosticView`).
+    - `verify.py`: the differential verifier. `Verifier` compiles the Turn's Baseline and Proposal trees through the tree compiler, matches their problems by fingerprint and line map (`diff_diagnostics`), makes the host repairs (a missing package, document wrappers in an included file, bibliography wiring) as host edits in staging, and returns the `Verification` a proposal carries.
     - `threads.py`: `ThreadStore`, one append-only, fsynced JSONL file per thread under `state/<id>/threads/` (turn records, transcript segments with provider messages kept verbatim, resolutions), and the memory renderings `<memory>`, `<earlier_turns>` and `<since_last_turn>`.
     - `context.py`: token budgets and estimation, `PromptSet` (the system prompts in `profiles/prompts/*.md`, shipped as package data, and their prompt version), and `ContextAssembler`, which packs a step's message within the budget, refuses a call that cannot fit before it is sent, and decides when a transcript segment rolls over.
     - `tools.py`.
