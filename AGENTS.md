@@ -25,6 +25,9 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
     - `types.py`, `errors.py`, `events.py` and `trace.py`: value types, errors, the versioned event union and the per-Turn Trace.
     - `providers/`: the model port, the catalog, tool-argument parsing, the Anthropic adapter (`anthropic.py`, which needs a cost ledger path to be built) and the fakes tests use.
     - `budget.py`: the Turn limits, the cost guard and the fsynced cost ledger shared by every process that makes paid calls.
+    - `staging.py`: the Turn's base (every Source file once, a dirty buffer in place of its file) and the overlay its edits land in; nothing reaches the disk.
+    - `proposals.py`: Hunks, rebase and line maps, and `ProposalDesk`, which keeps each project's open proposal under `state/<id>/proposals/` and is the only writer of agent text (accept hunk by hunk, with a `save` and an `accept` Checkpoint).
+    - `verify.py` and `threads.py`: for now only the records a proposal and a resolve carry (`Verification`, `DiagnosticView`, `Resolution`).
     - `tools.py`.
   - `api/`: FastAPI routers.
 - `backend/tests/`: pytest. Tests marked `tex` need a real TeX installation.
