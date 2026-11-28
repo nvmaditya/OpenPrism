@@ -1,0 +1,1262 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PrismTeX Turn events",
+  "description": "Turn events, v1. Clients ignore unknown event types and fields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/TurnStartedEvent"
+    },
+    {
+      "$ref": "#/$defs/StatusEvent"
+    },
+    {
+      "$ref": "#/$defs/RegionEvent"
+    },
+    {
+      "$ref": "#/$defs/MessageStartedEvent"
+    },
+    {
+      "$ref": "#/$defs/TokenEvent"
+    },
+    {
+      "$ref": "#/$defs/MessageCompletedEvent"
+    },
+    {
+      "$ref": "#/$defs/RewriteDeltaEvent"
+    },
+    {
+      "$ref": "#/$defs/ToolCallEvent"
+    },
+    {
+      "$ref": "#/$defs/ToolResultEvent"
+    },
+    {
+      "$ref": "#/$defs/CompileEvent"
+    },
+    {
+      "$ref": "#/$defs/DiagnosticsEvent"
+    },
+    {
+      "$ref": "#/$defs/ProposalEvent"
+    },
+    {
+      "$ref": "#/$defs/ResolvedEvent"
+    },
+    {
+      "$ref": "#/$defs/UsageEvent"
+    },
+    {
+      "$ref": "#/$defs/NoticeEvent"
+    },
+    {
+      "$ref": "#/$defs/ErrorEvent"
+    },
+    {
+      "$ref": "#/$defs/DoneEvent"
+    }
+  ],
+  "$defs": {
+    "CompileEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "compile"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "baseline",
+            "proposal"
+          ]
+        },
+        "round": {
+          "type": "integer"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "started",
+            "finished",
+            "cached"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "errors": {
+          "type": "integer"
+        },
+        "warnings": {
+          "type": "integer"
+        },
+        "duration_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "stage",
+        "round",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "Diagnostic": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "excerpt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "file",
+        "line",
+        "severity",
+        "kind",
+        "message",
+        "excerpt"
+      ],
+      "additionalProperties": false
+    },
+    "DiagnosticsEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "diagnostics"
+        },
+        "round": {
+          "type": "integer"
+        },
+        "new": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          }
+        },
+        "fixed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          }
+        },
+        "persisting_errors": {
+          "type": "integer"
+        },
+        "host_fixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "round",
+        "new",
+        "fixed",
+        "persisting_errors",
+        "host_fixes"
+      ],
+      "additionalProperties": false
+    },
+    "DoneEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "done"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "cancelled",
+            "failed",
+            "budget_exhausted",
+            "interrupted"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "answered",
+            "proposed",
+            "applied",
+            "no_change",
+            "clarify",
+            "nothing"
+          ]
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "clean",
+            "regressed",
+            "unverified",
+            "no_change"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "reply": {
+          "type": "string"
+        },
+        "proposal_id": {
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
+        "error_code": {
+          "type": "string",
+          "enum": [
+            "provider_auth",
+            "provider_not_found",
+            "provider_rate_limited",
+            "provider_overloaded",
+            "provider_unreachable",
+            "provider_timeout",
+            "provider_bad_request",
+            "provider_refused",
+            "history_rejected",
+            "context_overflow",
+            "budget_exhausted",
+            "interrupted",
+            "internal"
+          ]
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "status",
+        "outcome",
+        "verdict",
+        "summary",
+        "reply",
+        "usage"
+      ],
+      "additionalProperties": false
+    },
+    "ErrorEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "error"
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "provider_auth",
+            "provider_not_found",
+            "provider_rate_limited",
+            "provider_overloaded",
+            "provider_unreachable",
+            "provider_timeout",
+            "provider_bad_request",
+            "provider_refused",
+            "history_rejected",
+            "context_overflow",
+            "budget_exhausted",
+            "interrupted",
+            "internal"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "fatal": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "code",
+        "message",
+        "retryable",
+        "fatal"
+      ],
+      "additionalProperties": false
+    },
+    "MessageCompletedEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "message_completed"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "stop": {
+          "type": "string",
+          "enum": [
+            "end",
+            "tool_use",
+            "max_tokens",
+            "refusal"
+          ]
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "message_id",
+        "text",
+        "stop"
+      ],
+      "additionalProperties": false
+    },
+    "MessageStartedEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "message_started"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "step": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "message_id",
+        "step"
+      ],
+      "additionalProperties": false
+    },
+    "NoticeEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "notice"
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "editor_context_dropped",
+            "region_split",
+            "continued_later",
+            "prompt_trimmed",
+            "proposal_carried_partially",
+            "malformed_reply",
+            "text_tool_call_recovered",
+            "history_reset",
+            "unknown_model",
+            "compile_unavailable",
+            "budget_near",
+            "auto_accept_skipped",
+            "previous_turn_stopped"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "code",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "ProposalEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "proposal"
+        },
+        "proposal": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "proposal"
+      ],
+      "additionalProperties": false
+    },
+    "RegionEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "region"
+        },
+        "index": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "start_line": {
+          "type": "integer"
+        },
+        "end_line": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "selection",
+            "previous",
+            "paragraph",
+            "environment",
+            "section",
+            "diagnostic",
+            "insertion",
+            "file"
+          ]
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "index",
+        "path",
+        "start_line",
+        "end_line",
+        "kind",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "Remaining": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "integer"
+        },
+        "tokens": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wall_s": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "steps",
+        "tokens",
+        "cost_usd",
+        "wall_s"
+      ],
+      "additionalProperties": false
+    },
+    "ResolvedEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "resolved"
+        },
+        "proposal_id": {
+          "type": "string"
+        },
+        "applied": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stale": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StaleHunk"
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResolvedFile"
+          }
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "by": {
+          "type": "string",
+          "enum": [
+            "auto"
+          ]
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "proposal_id",
+        "applied",
+        "stale",
+        "files",
+        "by"
+      ],
+      "additionalProperties": false
+    },
+    "ResolvedFile": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "RewriteDeltaEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "rewrite_delta"
+        },
+        "index": {
+          "type": "integer"
+        },
+        "delta": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "index",
+        "delta"
+      ],
+      "additionalProperties": false
+    },
+    "StaleHunk": {
+      "type": "object",
+      "properties": {
+        "hunk_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "version_mismatch",
+            "context_changed",
+            "file_missing",
+            "file_exists"
+          ]
+        }
+      },
+      "required": [
+        "hunk_id",
+        "path",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "StatusEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "status"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "preparing",
+            "locating",
+            "working",
+            "verifying",
+            "repairing",
+            "finalizing"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "StepUsage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "cache_read_tokens": {
+          "type": "integer"
+        },
+        "cache_write_tokens": {
+          "type": "integer"
+        },
+        "served_model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "served_model"
+      ],
+      "additionalProperties": false
+    },
+    "TokenEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "token"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "delta": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "message_id",
+        "delta"
+      ],
+      "additionalProperties": false
+    },
+    "ToolCallEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "tool_call"
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "args": {
+          "type": "object"
+        },
+        "recovered": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "call_id",
+        "message_id",
+        "name",
+        "args",
+        "recovered"
+      ],
+      "additionalProperties": false
+    },
+    "ToolResultEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "tool_result"
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "error_code": {
+          "type": "string",
+          "enum": [
+            "unknown_tool",
+            "invalid_args",
+            "read_only_turn",
+            "escape_damage",
+            "control_char",
+            "path_denied",
+            "write_denied",
+            "not_found",
+            "ambiguous",
+            "exists",
+            "binary",
+            "too_large",
+            "stale_view",
+            "out_of_range",
+            "repeated",
+            "check_limit",
+            "truncated_args",
+            "cancelled"
+          ]
+        },
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "call_id",
+        "ok",
+        "summary",
+        "changed"
+      ],
+      "additionalProperties": false
+    },
+    "TurnLimits": {
+      "type": "object",
+      "properties": {
+        "max_steps": {
+          "type": "integer"
+        },
+        "max_wall_s": {
+          "type": "number"
+        },
+        "max_cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "max_steps",
+        "max_wall_s",
+        "max_cost_usd"
+      ],
+      "additionalProperties": false
+    },
+    "TurnStartedEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "turn_started"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string",
+          "enum": [
+            "agentic",
+            "guided"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string",
+          "enum": [
+            "question",
+            "edit",
+            "unknown"
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/TurnLimits"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "thread_id",
+        "profile",
+        "model",
+        "intent",
+        "limits"
+      ],
+      "additionalProperties": false
+    },
+    "Usage": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "integer"
+        },
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "cache_read_tokens": {
+          "type": "integer"
+        },
+        "cache_write_tokens": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "estimated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "steps",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "cost_usd",
+        "estimated"
+      ],
+      "additionalProperties": false
+    },
+    "UsageEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "type": {
+          "type": "string",
+          "const": "usage"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "step_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StepUsage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "totals": {
+          "$ref": "#/$defs/Usage"
+        },
+        "remaining": {
+          "$ref": "#/$defs/Remaining"
+        }
+      },
+      "required": [
+        "v",
+        "seq",
+        "turn_id",
+        "at",
+        "type",
+        "step",
+        "step_usage",
+        "totals",
+        "remaining"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
