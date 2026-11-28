@@ -278,7 +278,7 @@ class Compiler:
             if pdf_path is not None and engine in AUDITED_ENGINES:
                 # The PDF may carry a file read from outside the project
                 # (pdfTeX \pdfobj bypasses openin_any); discard it (SECURITY-1).
-                offending = audit_inputs(out, src, path_env=env.get("PATH"))
+                offending = audit_inputs(out, src, env=env)
                 if offending:
                     pdf_path.unlink(missing_ok=True)
                     pdf_path = None

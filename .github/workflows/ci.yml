@@ -84,7 +84,8 @@ jobs:
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Test (real TeX)
         working-directory: backend
-        run: pytest -m tex
+        # Full assertion messages: a failed compile's diagnostics are the evidence.
+        run: pytest -m tex -o verbosity_assertions=2
 
   frontend:
     name: frontend

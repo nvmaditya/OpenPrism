@@ -24,6 +24,7 @@ import os
 import shutil
 import subprocess
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 
 __all__ = ["AUDITED_ENGINES", "audit_inputs"]
@@ -58,7 +59,11 @@ _TEXMF_VARS = (
     "TEXMFCONFIG",
 )
 
-_roots_cache: dict[str, frozenset[str]] = {}
+# Variables that change with every compile and say nothing about where the TeX
+# trees are; they are left out of the kpsewhich query and its cache key.
+_PER_RUN_VARS = frozenset({"TEXMFOUTPUT"})
+
+_roots_cache: dict[tuple[str, tuple[tuple[str, str], ...]], frozenset[str]] = {}
 _roots_lock = threading.Lock()
 
 
@@ -73,9 +78,16 @@ def _expand(value: str) -> list[str]:
     return trees
 
 
-def _texmf_roots(kpsewhich: str | None) -> frozenset[str]:
-    """Real paths of the TeX trees, cached per kpsewhich executable."""
-    key = kpsewhich or ""
+def _texmf_roots(kpsewhich: str | None, env: Mapping[str, str]) -> frozenset[str]:
+    """Real paths of the TeX trees as the compile saw them, cached per environment.
+
+    kpsewhich runs in the compile's own environment: the per-user trees
+    (TEXMFHOME, TEXMFVAR, TEXMFCONFIG) expand from HOME or USERPROFILE, and
+    TeX reads fonts it generated at run time from TEXMFVAR. Querying with a
+    different environment would put those trees somewhere TeX never looked.
+    """
+    query_env = {name: value for name, value in env.items() if name not in _PER_RUN_VARS}
+    key = (kpsewhich or "", tuple(sorted(query_env.items())))
     with _roots_lock:
         cached = _roots_cache.get(key)
     if cached is not None:
@@ -83,7 +95,6 @@ def _texmf_roots(kpsewhich: str | None) -> frozenset[str]:
 
     found: set[str] = set()
     if kpsewhich is not None:
-        env = {"PATH": os.path.dirname(kpsewhich) or os.environ.get("PATH", "")}
         for var in _TEXMF_VARS:
             try:
                 out = subprocess.run(
@@ -91,7 +102,7 @@ def _texmf_roots(kpsewhich: str | None) -> frozenset[str]:
                     capture_output=True,
                     text=True,
                     timeout=10,
-                    env=env,
+                    env=query_env,
                     check=False,
                 ).stdout
             except (OSError, subprocess.SubprocessError):
@@ -121,7 +132,7 @@ def _inside(resolved: str, roots: frozenset[str]) -> bool:
     return any(candidate == Path(root) or candidate.is_relative_to(root) for root in roots)
 
 
-def audit_inputs(out_dir: Path, src_dir: Path, *, path_env: str | None) -> list[str]:
+def audit_inputs(out_dir: Path, src_dir: Path, *, env: Mapping[str, str]) -> list[str]:
     """Raw INPUT paths from the ``.fls`` files that resolve outside the allowed roots.
 
     An empty list means every recorded read was inside the project, the build
@@ -129,8 +140,9 @@ def audit_inputs(out_dir: Path, src_dir: Path, *, path_env: str | None) -> list[
     wrote them (the document's own text), not the resolved server paths, so a
     diagnostic built from them leaks no absolute server location.
     """
-    kpsewhich = shutil.which("kpsewhich", path=path_env) if path_env else shutil.which("kpsewhich")
-    allowed = _texmf_roots(kpsewhich) | {
+    path_env = env.get("PATH")
+    kpsewhich = shutil.which("kpsewhich", path=path_env) if path_env else None
+    allowed = _texmf_roots(kpsewhich, env) | {
         os.path.realpath(src_dir),
         os.path.realpath(out_dir),
     }
