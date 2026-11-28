@@ -21,6 +21,7 @@ def test_defaults() -> None:
     assert settings.max_upload_mb == 50
     assert settings.import_max_mb == 200
     assert settings.import_max_files == 5000
+    assert settings.ledger_path is None
 
 
 def test_environment_variables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -34,6 +35,7 @@ def test_environment_variables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     monkeypatch.setenv("PRISMTEX_MAX_UPLOAD_MB", "5")
     monkeypatch.setenv("PRISMTEX_IMPORT_MAX_MB", "7")
     monkeypatch.setenv("PRISMTEX_IMPORT_MAX_FILES", "9")
+    monkeypatch.setenv("PRISMTEX_LEDGER_PATH", str(tmp_path / "claude-ledger.jsonl"))
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
     assert settings.data_dir == tmp_path
     assert settings.host == "0.0.0.0"
@@ -44,6 +46,7 @@ def test_environment_variables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     assert settings.allowed_origins == ("http://box.lan:3000", "https://x.example")
     assert settings.compile_timeout_s == 30.5
     assert (settings.max_upload_mb, settings.import_max_mb, settings.import_max_files) == (5, 7, 9)
+    assert settings.ledger_path == tmp_path / "claude-ledger.jsonl"
 
 
 def test_dotenv_in_working_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -69,9 +72,11 @@ def test_environment_beats_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 def test_empty_lists_and_blank_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PRISMTEX_ALLOWED_HOSTS", "")
     monkeypatch.setenv("PRISMTEX_ACCESS_TOKEN", "   ")
+    monkeypatch.setenv("PRISMTEX_LEDGER_PATH", " ")
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
     assert settings.allowed_hosts == ()
     assert settings.access_token is None
+    assert settings.ledger_path is None
 
 
 @pytest.mark.parametrize(

@@ -23,7 +23,8 @@ PrismTeX is a self-hosted LaTeX workspace: a FastAPI backend that stores project
   - `agent/`: the writing agent (agent design). So far, these modules:
     - `types.py`, `errors.py`, `events.py` and `trace.py`: value types, errors, the versioned event union and the per-Turn Trace.
     - `providers/`: the model port, the catalog, tool-argument parsing and the fakes tests use.
-    - `budget.py` and `tools.py`.
+    - `budget.py`: the Turn limits, the cost guard and the fsynced cost ledger shared by every process that makes paid calls.
+    - `tools.py`.
   - `api/`: FastAPI routers.
 - `backend/tests/`: pytest. Tests marked `tex` need a real TeX installation.
 - `frontend/`: the Next.js UI. `lib/api.ts` is the only API client.

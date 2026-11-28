@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     max_upload_mb: int = Field(default=50, gt=0)
     import_max_mb: int = Field(default=200, gt=0)
     import_max_files: int = Field(default=5000, gt=0)
+    # The cost ledger of paid model calls (agent design §11.8); None means
+    # <data_dir>/state/ledger.jsonl (`prismtex.agent.budget.configured_ledger_path`).
+    ledger_path: Path | None = None
 
     @field_validator("allowed_hosts", "allowed_origins", mode="before")
     @classmethod
@@ -49,6 +52,15 @@ class Settings(BaseSettings):
     def _blank_token_is_unset(cls, value: Any) -> Any:
         # `PRISMTEX_ACCESS_TOKEN=` in a .env file must not count as a token:
         # an empty token would let any request with an empty Bearer through.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("ledger_path", mode="before")
+    @classmethod
+    def _blank_path_is_unset(cls, value: Any) -> Any:
+        # `PRISMTEX_LEDGER_PATH=` must mean "the default", never Path("") (the
+        # working directory).
         if isinstance(value, str) and not value.strip():
             return None
         return value

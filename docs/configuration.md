@@ -35,3 +35,11 @@ The UI's `/api/*` proxy caps the size of a request body it will forward, so that
 ## Model providers
 
 There are no provider settings yet. The writing agent is being rebuilt, and its provider variables (Ollama, Anthropic and OpenAI-compatible endpoints) arrive with it in Phase 1.
+
+## Cost ledger
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PRISMTEX_LEDGER_PATH` | `<data_dir>/state/ledger.jsonl` | The cost ledger of paid model calls. Each paid call is reserved in it, fsynced, before it is sent, and settled after, by the app and by eval runs alike, so spend adds up across runs. Keep it outside the data directory and back it up, so deleting a data folder never resets the count. An empty value counts as unset. |
+
+The ledger is a JSON Lines file. Two files sit beside it: `<ledger>.mutex`, an empty file that lets one process at a time write, which stays; and `<ledger>.lock`, which exists only while an eval run holds the ledger. A run that crashes can leave the `.lock` file behind, and the next run then refuses to start and names it: delete it once no other run is active.
